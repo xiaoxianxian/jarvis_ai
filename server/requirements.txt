@@ -1,0 +1,13 @@
+# J.A.R.V.I.S voice pipeline server dependencies.
+# Install:  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+fastapi
+uvicorn
+requests
+pyyaml
+numpy
+anthropic
+RealtimeSTT
+faster-whisper
+silero-vad
+websockets
+psutil

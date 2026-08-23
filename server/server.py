@@ -22,14 +22,17 @@ and approval events. Falls back to direct Anthropic ("basic mode") if unreachabl
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
+import posixpath
 import re
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator, Iterator
+from urllib.parse import unquote, urlparse
 
 import requests
 import uvicorn
@@ -52,6 +55,7 @@ LOG_PATH = ROOT / "logs" / "latency.jsonl"
 STATE_PATH = ROOT / "logs" / "hermes_sessions.json"
 USAGE_PATH = ROOT / "logs" / "usage_stats.json"
 _USAGE_LOCK = threading.Lock()
+_STATE_LOCK = threading.Lock()  # guards hermes_sessions.json read-modify-write
 
 
 def _today() -> str:
@@ -138,6 +142,9 @@ class TurnTiming:
     interrupted: bool = False
     tools_used: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Currently-running TTS subprocess (edge/piper/say). Kept here so barge-in
+    # cancellation can terminate it instead of letting it run to completion.
+    tts_proc: object | None = None
 
     def summary(self) -> dict:
         eos = self.end_of_speech_monotonic
@@ -202,19 +209,26 @@ class HermesAPI:
         STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
 
     def get_session_id(self, name: str, force_new: bool = False) -> str:
-        state = self._load_state()
-        sid = state.get(name)
-        if sid and not force_new:
+        # Serialize the whole read-modify-write of hermes_sessions.json: two WS
+        # connections creating the same conversation concurrently would
+        # otherwise overwrite each other's entry.
+        with _STATE_LOCK:
+            state = self._load_state()
+            sid = state.get(name)
+            if sid and not force_new:
+                return sid
+            r = requests.post(f"{self.base}/api/sessions", headers=self.headers(),
+                              json={"title": name}, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            sid = (data.get("session") or data).get("id")
+            # Re-read under the lock so we merge into any entries another
+            # thread wrote while we were creating the session.
+            state = self._load_state()
+            state[name] = sid
+            self._save_state(state)
+            print(f"Created Hermes session '{name}' -> {sid}", flush=True)
             return sid
-        r = requests.post(f"{self.base}/api/sessions", headers=self.headers(),
-                          json={"title": name}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        sid = (data.get("session") or data).get("id")
-        state[name] = sid
-        self._save_state(state)
-        print(f"Created Hermes session '{name}' -> {sid}", flush=True)
-        return sid
 
     def stop_run(self, run_id: str) -> dict:
         r = requests.post(f"{self.base}/v1/runs/{run_id}/stop", headers=self.headers(), timeout=15)
@@ -227,10 +241,18 @@ class HermesAPI:
 
     def chat_stream_events(self, session_id: str, input_text: str, timeout: float) -> Iterator[tuple[str, str]]:
         """Yield ("run"|"text"|"tool"|"approval"|"final", value) from a session turn."""
+        payload = {"input": input_text}
+        # Per-turn instructions: force Chinese replies AND stop the agent from
+        # calling `say`/TTS tools itself (its `say -v Mei-Jia` was a competing
+        # FEMALE voice that bypassed our male edge pipeline). Without this the
+        # field in config was dead — never sent to Hermes.
+        instr = (self.cfg or {}).get("instructions")
+        if instr:
+            payload["instructions"] = instr
         resp = requests.post(
             f"{self.base}/api/sessions/{session_id}/chat/stream",
             headers={**self.headers(), "Accept": "text/event-stream"},
-            json={"input": input_text}, stream=True, timeout=(10, timeout),
+            json=payload, stream=True, timeout=(10, timeout),
         )
         if resp.status_code >= 400:
             resp.close()
@@ -306,7 +328,7 @@ class VoicePipelineServer:
             device=cfg["stt"].get("device", "cpu"),
             compute_type=cfg["stt"].get("compute_type", "int8"),
             sample_rate=int(cfg["stt"].get("sample_rate", 16000)),
-            language="en",
+            language=cfg["stt"].get("language") or None,  # null = auto-detect (zh+en); "zh" pins Chinese
             beam_size=1,
             faster_whisper_vad_filter=False,
             no_log_file=True,
@@ -436,9 +458,13 @@ class VoicePipelineServer:
 
     def tts_chunks_sync(self, text: str, timing: TurnTiming) -> Iterator[bytes]:
         voice = self.cfg["voice"]
-        key = os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("ELEVEN_API_KEY") or os.environ.get("XI_API_KEY")
-        if not key:
-            raise RuntimeError("ElevenLabs API key not found")
+        provider = (voice.get("provider") or "elevenlabs").lower()
+        eleven_key = os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("ELEVEN_API_KEY") or os.environ.get("XI_API_KEY")
+        if provider != "elevenlabs" or not eleven_key:
+            # Free, offline system TTS (macOS 'say') — no API key required.
+            # Also the automatic fallback if ElevenLabs is configured but unset.
+            yield from self._system_tts_chunks(text, timing, voice)
+            return
         timing.tts_model = voice["model"]
         timing.voice_id = voice["voice_id"]
         timing.tts_request_start_monotonic = timing.tts_request_start_monotonic or time.perf_counter()
@@ -470,6 +496,147 @@ class VoicePipelineServer:
                 yield chunk
         finally:
             response.close()  # barge-in cancels mid-stream; don't leak the connection
+
+    def _system_tts_chunks(self, text: str, timing: TurnTiming, voice: dict) -> Iterator[bytes]:
+        """Chinese TTS: edge-tts (natural neural, online) with offline Piper
+        fallback; English uses macOS 'say'. All paths emit a 16 kHz mono PCM16
+        WAV streamed as chunks. Backend selectable via JARVIS_TTS_BACKEND
+        (edge|piper|say)."""
+        import subprocess, tempfile, wave, array, sys
+        is_cjk = bool(re.search(r"[\u4e00-\u9fff]", text))
+        backend = os.environ.get("JARVIS_TTS_BACKEND", "edge")  # edge | piper | say
+        vname = (voice.get("chinese_voice") if is_cjk else voice.get("voice_name")) or ""
+        # Clean text for speech: drop markdown markers and emoji so the neural
+        # TTS doesn't read "星号" or describe emoji aloud (sounds robotic).
+        speak = re.sub(r"[*_`#>]", "", text)
+        speak = re.sub(r"[\U0001F000-\U0001FFFF\u2600-\u27BF\u2190-\u21FF\u2B00-\u2BFF]", "", speak).strip() or text
+        fd, wav_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        HERE = os.path.dirname(os.path.abspath(__file__))
+
+        def _run_wrapper(wrapper, label, timeout=60):
+            cmd = [sys.executable, wrapper, wav_path]
+            # Pass bytes, not str: Python 3.13's subprocess.run(input=<str>)
+            # raises "memoryview: a bytes-like object is required, not 'str'",
+            # which silently broke both edge and piper at runtime.
+            stdin = speak if isinstance(speak, bytes) else speak.encode("utf-8")
+            proc = None
+            try:
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                timing.tts_proc = proc
+                try:
+                    _, _ = proc.communicate(input=stdin, timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    raise
+                if proc.returncode != 0:
+                    raise RuntimeError(f"exit code {proc.returncode}")
+                timing.tts_model = label
+                return True
+            except Exception as exc:
+                print(f"TTS {label} error: {exc}", flush=True)
+                return False
+            finally:
+                if timing.tts_proc is proc:
+                    timing.tts_proc = None
+
+        if is_cjk and backend == "edge":
+            # Natural Chinese via Microsoft edge-tts (free neural voice, online).
+            # Retry ONCE on a transient failure before falling back to the offline
+            # Piper model — a single dropped connection must NOT drop us to the
+            # female Piper voice, which is what made answers sound robotic.
+            edge_label = "edge:" + os.environ.get("EDGE_TTS_VOICE", "zh-CN-YunyangNeural")
+            ok = _run_wrapper(os.path.join(HERE, "tts_edge.py"), edge_label)
+            if not ok:
+                print("TTS edge failed once, retrying...", flush=True)
+                ok = _run_wrapper(os.path.join(HERE, "tts_edge.py"), edge_label)
+            if not ok:
+                # NEVER fall back to the female Piper voice — a transient edge
+                # outage must not suddenly make JARVIS sound like a woman.
+                # Use the built-in male Chinese voice (Rocko) instead.
+                print("TTS edge unavailable, falling back to male system voice (Rocko).", flush=True)
+                cmd = ["/usr/bin/say", "-o", wav_path, "--data-format=LEI16@16000",
+                       "-v", "Rocko", speak]
+                proc = None
+                try:
+                    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.DEVNULL)
+                    timing.tts_proc = proc
+                    try:
+                        proc.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                        raise
+                    if proc.returncode != 0:
+                        raise RuntimeError(f"exit code {proc.returncode}")
+                    timing.tts_model = "system:Rocko"
+                except Exception as exc:
+                    print(f"system TTS error: {exc}", flush=True)
+                    try: os.unlink(wav_path)
+                    except Exception: pass
+                    return
+                finally:
+                    if timing.tts_proc is proc:
+                        timing.tts_proc = None
+        elif is_cjk and backend == "piper":
+            # Check the result: on failure the wav is empty/garbage and yielding
+            # it would send silent audio with no error surfaced to the client.
+            ok = _run_wrapper(os.path.join(HERE, "tts_piper.py"), "piper:zh_CN-huayan-medium")
+            if not ok:
+                try: os.unlink(wav_path)
+                except Exception: pass
+                return
+        else:
+            # English, or backend forced to "say": macOS system voice.
+            cmd = ["/usr/bin/say", "-o", wav_path, "--data-format=LEI16@16000"]
+            if vname:
+                cmd += ["-v", vname]
+            cmd += [speak]
+            proc = None
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL)
+                timing.tts_proc = proc
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    raise
+                if proc.returncode != 0:
+                    raise RuntimeError(f"exit code {proc.returncode}")
+                timing.tts_model = "system:" + (vname or "default")
+            except Exception as exc:
+                print(f"system TTS error: {exc}", flush=True)
+                try: os.unlink(wav_path)
+                except Exception: pass
+                return
+            finally:
+                if timing.tts_proc is proc:
+                    timing.tts_proc = None
+        timing.tts_request_start_monotonic = timing.tts_request_start_monotonic or time.perf_counter()
+        record_usage(tts_chars=len(text))
+        try:
+            with wave.open(wav_path, "rb") as wf:
+                nch = wf.getnchannels()
+                raw = wf.readframes(wf.getnframes())
+            if nch == 2:
+                stereo = array.array("h"); stereo.frombytes(raw)
+                mono = array.array("h", (stereo[i] // 2 + stereo[i + 1] // 2 for i in range(0, len(stereo), 2)))
+                raw = mono.tobytes()
+            if timing.first_tts_audio_byte_monotonic is None:
+                timing.first_tts_audio_byte_monotonic = time.perf_counter()
+            for i in range(0, len(raw), 4096):
+                piece = raw[i:i + 4096]
+                if len(piece) % 2:
+                    piece = piece[:-1]
+                yield piece
+        finally:
+            try: os.unlink(wav_path)
+            except Exception: pass
 
     # ------------------------------------------------------------- Turn flow
 
@@ -682,33 +849,63 @@ def hud_token() -> str | None:
     return os.environ.get(env_name) or None
 
 
+_PUBLIC_API_PATHS = ("/api/machines", "/api/usage")
+
+
 def _request_authed(request: Request) -> bool:
+    """Fail-closed: when no hud token is configured, protected endpoints refuse."""
     token = hud_token()
     if not token:
-        return True
+        return False
     supplied = request.headers.get("x-jarvis-token") or request.cookies.get("jarvis_token")
-    return supplied == token
+    return bool(supplied) and supplied == token
 
 
 @app.middleware("http")
 async def api_auth_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api/") and not _request_authed(request):
-        return Response(status_code=401, content="jarvis auth required")
+    path = request.url.path
+    if path.startswith("/api/"):
+        if any(path == p or path.startswith(p + "/") for p in _PUBLIC_API_PATHS):
+            return await call_next(request)
+        if not _request_authed(request):
+            if not getattr(api_auth_middleware, "_warned", False):
+                api_auth_middleware._warned = True  # type: ignore[attr-defined]
+                print("WARNING: no HUD token configured — set JARVIS_HUD_TOKEN "
+                      "to enable /api/* and dashboard access", flush=True)
+            return Response(status_code=401, content="jarvis auth required")
     return await call_next(request)
 
 
+def _client_is_loopback(ws: WebSocket) -> bool:
+    try:
+        host = (ws.client.host if ws.client else "") or ""
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _ws_allowed(ws: WebSocket) -> bool:
-    """Browsers send Origin (+cookie); native clients (PTT, tests) send neither."""
+    """Browsers send Origin (+cookie); native clients (PTT, tests) send neither.
+
+    Fail-closed: a configured token is required from every browser-originated
+    connection. Non-browser clients without an Origin are accepted only from
+    loopback addresses.
+    """
     origin = ws.headers.get("origin")
+    token = hud_token()
     if not origin:
-        return True  # non-browser client on the LAN (Python PTT, e2e tests)
-    from urllib.parse import urlparse
+        # non-browser client: only trusted for local loopback connections,
+        # otherwise require the same token as browsers
+        if _client_is_loopback(ws):
+            return True
+        return bool(token) and (
+            ws.cookies.get("jarvis_token") == token or ws.query_params.get("token") == token
+        )
     host = (urlparse(origin).hostname or "").lower()
     if host not in ALLOWED_ORIGIN_HOSTS:
         return False
-    token = hud_token()
     if not token:
-        return True
+        return False
     return ws.cookies.get("jarvis_token") == token or ws.query_params.get("token") == token
 
 
@@ -722,12 +919,21 @@ ALLOWED_GET_PATHS = {
 
 
 def _proxy_allowed(method: str, path: str) -> bool:
+    # normalize first: reject any traversal ("..", "//", encoded dots) so that
+    # e.g. "/api/sessions/x/../../../admin/messages?x=/messages" or "..%2f"
+    # cannot smuggle a non-whitelisted target past this check
+    decoded = unquote(path)
+    if decoded != path:
+        return False  # percent-encoded characters in the route path: refuse
+    normalized = posixpath.normpath(path)
+    if ".." in normalized.split("/") or normalized != path:
+        return False
     if method == "GET":
-        return path in ALLOWED_GET_PATHS or (
-            path.startswith("/api/sessions/") and path.endswith("/messages")
+        return normalized in ALLOWED_GET_PATHS or (
+            normalized.startswith("/api/sessions/") and normalized.endswith("/messages")
         )
     if method == "POST":
-        return path == "/v1/responses"
+        return normalized == "/v1/responses"
     return False
 
 
@@ -967,6 +1173,12 @@ _STRIP_HEADERS = {"x-frame-options", "content-security-policy", "content-length"
 
 @dash_app.middleware("http")
 async def dash_auth_middleware(request: Request, call_next):
+    if not hud_token():
+        if not getattr(dash_auth_middleware, "_warned", False):
+            dash_auth_middleware._warned = True  # type: ignore[attr-defined]
+            print("WARNING: no HUD token configured — set JARVIS_HUD_TOKEN "
+                  "to enable dashboard proxy access", flush=True)
+        return Response(status_code=503, content="jarvis auth not configured")
     if not _request_authed(request):
         return Response(status_code=401, content="jarvis auth required")
     return await call_next(request)
@@ -975,6 +1187,25 @@ async def dash_auth_middleware(request: Request, call_next):
 def _dash_target() -> str:
     return ((CFG.get("server") or {}).get("dashboard_proxy") or {}).get(
         "target", "http://127.0.0.1:9119").rstrip("/")
+
+
+def _dash_frame_ancestors(request: Request) -> str:
+    """Only the HUD's own TLS origin(s) may iframe the proxied dashboard."""
+    server = CFG.get("server") or {}
+    hosts: list[str] = []
+    seen: set[str] = set()
+    for h in [server.get("host", "127.0.0.1")] + list(server.get("tls_hosts") or []):
+        h = str(h)
+        if h not in seen and h and h != "0.0.0.0":
+            seen.add(h)
+            try:
+                ipaddress.ip_address(h)  # bare IP origin: no port needed
+                hosts.append(f"https://{h}" if ":" not in h else f"https://[{h}]")
+            except ValueError:
+                for tp in server.get("tls_ports") or []:
+                    hosts.append(f"https://{h}:{tp}")
+    ancestors = " ".join(hosts) or "https://127.0.0.1"
+    return f"frame-ancestors {ancestors}; default-src 'none'"
 
 
 @dash_app.websocket("/{path:path}")
@@ -1032,6 +1263,9 @@ async def dash_http_proxy(path: str, request: Request) -> Response:
 
     resp = await asyncio.to_thread(do_request)
     out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in _STRIP_HEADERS}
+    # we stripped the upstream CSP, so supply our own frame-ancestors policy
+    # restricting iframing to this server's own HUD origin(s)
+    out_headers["Content-Security-Policy"] = _dash_frame_ancestors(request)
     return Response(content=resp.content, status_code=resp.status_code, headers=out_headers)
 
 
@@ -1095,15 +1329,36 @@ async def _run_turn(ws: WebSocket, pipeline: VoicePipelineServer, conn: ConnStat
 async def _cancel_active_turn(ws: WebSocket, pipeline: VoicePipelineServer, conn: ConnState,
                               stop_remote: bool = True) -> None:
     run_id = conn.current_run_id  # capture BEFORE cancel: turn cleanup clears it
-    turn_was_active = conn.turn_task is not None and not conn.turn_task.done()
-    if turn_was_active:
+    turn_task = conn.turn_task
+    turn_was_active = turn_task is not None and not turn_task.done()
+    # Grab the timing object before awaiting: turn cleanup (finally) nulls
+    # conn.timing while we await below.
+    timing = conn.timing
+    if turn_was_active and turn_task is not None:
         if conn.spoken_sentences:
             conn.interrupt_note = conn.spoken_sentences[-1]
-        conn.turn_task.cancel()
+        # Kill any in-flight TTS subprocess now — cancelling the turn task does
+        # not stop the worker thread running edge-tts/say/Piper, which would
+        # otherwise keep synthesizing for up to its full timeout.
+        proc = getattr(timing, "tts_proc", None) if timing else None
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                print("Barge-in: terminated in-flight TTS subprocess.", flush=True)
+            except Exception as exc:
+                print(f"Barge-in: failed to terminate TTS subprocess: {exc}", flush=True)
+        turn_task.cancel()
         try:
-            await conn.turn_task
-        except (asyncio.CancelledError, Exception):
-            pass
+            await turn_task
+        except asyncio.CancelledError:
+            # This await can raise CancelledError either because the turn task
+            # was just cancelled (expected barge-in) or because THIS coroutine
+            # itself got cancelled mid-await. Swallow only the former;
+            # re-raise an outer cancellation so it isn't lost.
+            if not turn_task.cancelled():
+                raise
+        except Exception:
+            pass  # turn failed for its own reasons; barge-in proceeds either way
     if stop_remote and run_id and turn_was_active:
         conn.current_run_id = None
         try:

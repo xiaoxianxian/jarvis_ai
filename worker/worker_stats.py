@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Tiny stats agent for a GPU render/worker machine.
 
-Serves JSON at http://0.0.0.0:8767/stats for the Jarvis HUD machines panel.
+Serves JSON at http://127.0.0.1:8767/stats for the Jarvis HUD machines panel
+(set JARVIS_WORKER_BIND=0.0.0.0 to expose on the LAN).
 
 Setup on the worker (once):
     pip install psutil
@@ -11,6 +12,7 @@ Setup on the worker (once):
 Requires nvidia-smi on PATH for GPU stats (ships with NVIDIA drivers).
 """
 import json
+import os
 import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -20,6 +22,8 @@ except ImportError:
     psutil = None
 
 PORT = 8767
+# default to loopback only; set JARVIS_WORKER_BIND=0.0.0.0 to expose on the LAN
+BIND_HOST = os.environ.get("JARVIS_WORKER_BIND", "127.0.0.1")
 
 
 def gpu_stats() -> dict:
@@ -66,5 +70,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Jarvis worker stats agent on http://0.0.0.0:{PORT}/stats")
-    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    print(f"Jarvis worker stats agent on http://{BIND_HOST}:{PORT}/stats")
+    HTTPServer((BIND_HOST, PORT), Handler).serve_forever()

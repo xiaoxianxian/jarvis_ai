@@ -6,9 +6,12 @@ open-source autonomous agent). Talk to a *real* agent — one with persistent
 memory, terminal access, web search, file tools, and 80+ skills — through a
 glowing arc-reactor HUD in any browser on your LAN, or a push-to-talk client.
 
-**Everything runs on your own hardware.** The only cloud calls are your LLM
-provider (via Hermes) and ElevenLabs for the voice. Speech-to-text is fully
-local (Whisper on CPU).
+**Everything runs on your own hardware.** The only cloud call is your LLM
+provider (via Hermes). Speech-to-text is fully local (Whisper on CPU), and
+voice output works out of the box with zero API keys — free neural TTS via
+Microsoft edge-tts for Chinese, with the built-in macOS `say` as a fallback.
+An [ElevenLabs](https://elevenlabs.io) key is purely an optional voice-quality
+upgrade.
 
 ## Demo
 
@@ -23,7 +26,8 @@ Click the ring and speak. Your words transcribe **live on screen** while you
 talk. The transcript goes to Hermes Agent, which actually *does things* — reads
 and writes files, runs commands, searches the web, remembers you across
 sessions — and the reply streams back as speech, sentence by sentence, while
-the rest is still being generated. Typical round trip: 3–5 seconds.
+the rest is still being generated. Typical round trip: 3–8 s (model &
+network dependent).
 
 The HUD around the ring is a real control center:
 
@@ -76,8 +80,9 @@ restart.
 - [Hermes Agent](https://hermes-agent.nousresearch.com/docs/) installed and
   configured with an LLM provider
 - Python 3.11+
-- An [ElevenLabs](https://elevenlabs.io) API key (free tier works; ~0.5
-  credits/char on Flash)
+- Voice output needs no API key: free edge-tts (Chinese) + macOS `say`
+  fallback by default. An [ElevenLabs](https://elevenlabs.io) API key is an
+  optional voice-quality upgrade (free tier works; ~0.5 credits/char on Flash).
 - Any modern browser on the LAN
 
 ## Install
@@ -89,17 +94,16 @@ Full walkthrough in [docs/SETUP.md](docs/SETUP.md). Short version:
 cat >> ~/.hermes/.env <<EOF
 API_SERVER_ENABLED=true
 API_SERVER_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')
-JARVIS_HUD_TOKEN=$(python3 -c 'import secrets;print("jarvis-"+secrets.token_hex(3))')
+JARVIS_HUD_TOKEN=$(python3 -c 'import secrets;print("jarvis-"+secrets.token_hex(8))')
 ELEVENLABS_API_KEY=your-key-here
 EOF
 hermes gateway   # or set up its LaunchAgent / service
 
 # 2. This repo
-git clone https://github.com/YOURNAME/jarvis-hermes-hud
-cd jarvis-hermes-hud/server
+git clone https://github.com/YOURNAME/jarvis-ai
+cd jarvis-ai/server
 python3 -m venv .venv
-.venv/bin/pip install fastapi uvicorn requests pyyaml numpy anthropic \
-    RealtimeSTT faster-whisper silero-vad websockets psutil
+.venv/bin/pip install -r requirements.txt
 cp config/server.example.yaml config/server.yaml   # edit: your ElevenLabs voice_id etc.
 scripts/make-certs.sh                              # self-signed TLS (browser mic needs it)
 scripts/make-boot-audio.sh YourName                # one-time boot greeting synthesis

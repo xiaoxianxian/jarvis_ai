@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +35,7 @@ header{
 header h1{font-family:'Orbitron'; font-size:19px; letter-spacing:8px; color:var(--cyan); text-shadow:0 0 12px #00e5ff88}
 header .sub{font-size:12px; letter-spacing:3px; color:var(--txt-dim)}
 #clock{font-family:'Orbitron'; font-size:15px; letter-spacing:2px; color:var(--teal)}
-.col{display:flex; flex-direction:column; gap:8px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent}
+.col{display:flex; flex-direction:column; gap:8px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent; min-width:0}
 .panel{
   border:1px solid var(--line); background:var(--panel); padding:10px 12px; position:relative;
   clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));
@@ -54,7 +54,6 @@ header .sub{font-size:12px; letter-spacing:3px; color:var(--txt-dim)}
 .dot.off{background:var(--red); box-shadow:0 0 6px var(--red)}
 #center{display:flex; flex-direction:column; align-items:center; justify-content:flex-start; position:relative; overflow:hidden}
 #reactorWrap{position:relative; width:min(46vh,440px); height:min(46vh,440px); cursor:pointer; flex-shrink:0}
-#reactor{width:100%; height:100%}
 #coreState{
   position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
   pointer-events:none; font-family:'Orbitron';
@@ -83,7 +82,25 @@ button.btn:hover{background:#0e3349; box-shadow:0 0 10px #00e5ff44}
 button.btn.danger{color:var(--red); border-color:#7a2a33; background:#240a0e}
 button.btn.danger:hover{background:#3a0e15; box-shadow:0 0 10px #ff4d5e55}
 button.btn.amber{color:var(--amber); border-color:#7a5a1a; background:#241c0a}
+button.btn:focus-visible{outline:1px solid var(--cyan); outline-offset:2px; box-shadow:0 0 10px #00e5ff66}
+button.btn.danger:focus-visible{outline-color:var(--red); box-shadow:0 0 10px #ff4d5e66}
 #stopBtn{display:none}
+/* ---- collapsible left / right side columns ---- */
+.hdr-right{display:flex; align-items:center; gap:14px}
+.btn.ghost{background:transparent; border-color:var(--line); color:var(--txt-dim); padding:7px 11px}
+.btn.ghost:hover{color:var(--cyan); border-color:var(--cyan-dim); background:#0e2233}
+#grid.collapse-left{grid-template-columns:0 1fr 320px}
+#grid.collapse-right{grid-template-columns:320px 1fr 0}
+#grid.collapse-left.collapse-right{grid-template-columns:0 1fr 0}
+#grid.collapse-left #colLeft,#grid.collapse-right #colRight{opacity:0; pointer-events:none; overflow:hidden}
+.col-tab{position:fixed; top:64px; width:22px; height:128px; display:none; align-items:center; justify-content:center;
+  cursor:pointer; z-index:18; background:var(--panel); border:1px solid var(--line); color:var(--cyan);
+  font-size:12px; letter-spacing:1px; writing-mode:vertical-rl; opacity:.85; transition:opacity .2s, box-shadow .2s}
+.col-tab:hover{color:#eaffff; box-shadow:0 0 12px #00e5ff66}
+.col-tab.left{left:0; border-left:none; border-radius:0 8px 8px 0}
+.col-tab.right{right:0; border-right:none; border-radius:8px 0 0 8px}
+#grid.collapse-left .col-tab.left{display:flex}
+#grid.collapse-right .col-tab.right{display:flex}
 #approvals{position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:20; width:min(560px,92%); display:flex; flex-direction:column; gap:8px}
 .appr{border:1px solid var(--amber); background:#1a1305f2; padding:12px 14px;
   box-shadow:0 0 24px #ffb30044; animation:apprIn .25s ease-out}
@@ -209,6 +226,7 @@ body.booted header{animation:panelIn .4s backwards}
   header h1{font-size:15px; letter-spacing:4px}
   header .sub{display:none}
   #clock{font-size:12px}
+  #toggleLeft,#toggleRight,.col-tab{display:none!important}
   #center{order:1; min-height:0}
   #reactorWrap{width:min(62vw,260px); height:min(62vw,260px)}
   #coreState .st{font-size:12px; letter-spacing:4px}
@@ -232,106 +250,164 @@ footer{
 }
 .bar{height:3px; background:#0a2435; margin-top:3px}
 .bar i{display:block; height:100%; background:linear-gradient(90deg,var(--cyan-dim),var(--cyan)); width:0%; transition:width .4s}
+
+/* ---------------- JARVIS avatar: ion-halo helmet (gitcode-style) ---------------- */
+.avatar-window{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; overflow:visible}
+.character-rig{position:relative; width:82%; height:82%; display:flex; align-items:center; justify-content:center; animation:char-float 5.5s ease-in-out infinite}
+.helmet-character{height:100%; width:auto; max-width:100%; object-fit:contain;
+  filter:saturate(1.1) contrast(1.08) drop-shadow(0 0 16px rgba(var(--rgb,32,199,255),calc(.26 + var(--voice-glow,.45) * .42))) drop-shadow(0 0 52px rgba(var(--rgb,32,199,255),.2));
+  transform:scale(var(--voice-pulse,1)); transform-origin:center; transition:filter .28s, transform .12s linear}
+.character-aura{position:absolute; inset:10% 22%; z-index:0; border-radius:50%;
+  background:radial-gradient(ellipse, rgba(var(--rgb,32,199,255),calc(.1 + var(--voice-glow,.45)*.12)), rgba(var(--rgb,32,199,255),.02) 52%, transparent 75%);
+  filter:blur(16px); animation:aura-breathe 3.2s ease-in-out infinite; pointer-events:none}
+.helmet-scan{position:absolute; inset:0; z-index:2;
+  background:linear-gradient(180deg, transparent 0 43%, rgba(var(--rgb,32,199,255),.06) 46%, rgba(var(--rgb,32,199,255),.7) 49%, rgba(255,255,255,.85) 50%, rgba(var(--rgb,32,199,255),.18) 51%, transparent 55%);
+  background-size:100% 210%; mix-blend-mode:screen; opacity:.5;
+  -webkit-mask:url("assets/jarvis-character.png") center/contain no-repeat; mask:url("assets/jarvis-character.png") center/contain no-repeat;
+  animation:helmet-scan 4.8s linear infinite; pointer-events:none}
+.voice-ring{position:absolute; inset:9% 14%; border:1px solid rgba(var(--rgb,32,199,255),.55); border-radius:50%;
+  box-shadow:0 0 20px rgba(var(--rgb,32,199,255),.26), inset 0 0 22px rgba(var(--rgb,32,199,255),.14); animation:spin 13s linear infinite; pointer-events:none}
+.ring-two{position:absolute; inset:4% 9%; border:1px dashed rgba(var(--rgb,32,199,255),.4); border-radius:50%; animation:spin 20s linear infinite reverse; pointer-events:none}
+.reticle{position:absolute; width:74%; aspect-ratio:1; border:1px solid rgba(var(--rgb,32,199,255),.13); border-radius:50%; animation:spin 45s linear infinite; pointer-events:none}
+.reticle:before{content:""; position:absolute; inset:7%; border:1px dashed rgba(var(--rgb,32,199,255),.17); border-radius:50%}
+.particle-field{position:absolute; inset:0; width:100%; height:100%; z-index:1; pointer-events:none; mix-blend-mode:screen}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes char-float{50%{transform:translateY(-7px)}}
+@keyframes aura-breathe{50%{opacity:.7; transform:scale(1.04)}}
+@keyframes helmet-scan{from{background-position:0 -120%}to{background-position:0 120%}}
+
+/* ---------------- reduced motion: 关闭无限动画 / 入场降级为淡入 ---------------- */
+@media (prefers-reduced-motion: reduce){
+  .character-rig,.character-aura,.helmet-scan,
+  .voice-ring,.ring-two,.reticle{animation:none!important}
+  #bootLogo,#bootLines div{animation:none!important; opacity:1}
+  body.booted .panel, body.booted header{animation:none!important}
+  .holo{animation:holoFade .25s ease-out both}
+  @keyframes holoFade{from{opacity:0}to{opacity:1}}
+  .holo.idle,.holoFrame rect,.holoFrame path,.holoHex,.holoScan,.holoChroma{animation:none!important}
+  .holo.idle .holoContentWrap{opacity:1}
+  #grid{transition:none}
+  .appr{animation:none}
+}
+#coreState{bottom:0; top:auto}
+#coreState .st{font-size:16px; letter-spacing:6px; color:rgb(var(--rgb,32,199,255)); text-shadow:0 0 14px rgba(var(--rgb,32,199,255),.7)}
 </style>
 </head>
 <body>
 <div id="pinGate" style="display:none; position:fixed; inset:0; z-index:200; background:#020509f2;
   flex-direction:column; align-items:center; justify-content:center; gap:14px">
-  <div style="font-family:'Orbitron'; font-size:18px; letter-spacing:8px; color:var(--cyan); text-shadow:0 0 20px #00e5ff88">ACCESS CODE</div>
+  <div style="font-family:'Orbitron'; font-size:18px; letter-spacing:8px; color:var(--cyan); text-shadow:0 0 20px #00e5ff88">访问密码</div>
   <input id="pinInput" type="password" autocomplete="off" style="background:#06101c; border:1px solid var(--cyan-dim);
     color:#cfeefb; padding:10px 14px; font-family:'Orbitron'; font-size:16px; letter-spacing:4px; text-align:center; width:240px; outline:none">
-  <button class="btn" id="pinBtn">AUTHENTICATE</button>
+  <button class="btn" id="pinBtn">验证</button>
+  <div style="font-size:12px; color:var(--txt-dim); letter-spacing:1px; max-width:340px; text-align:center; line-height:1.5">访问密码 = 安装时生成的 JARVIS_HUD_TOKEN（见主机 ~/.hermes/.env）</div>
   <div id="pinMsg" style="font-size:12px; color:var(--txt-dim); letter-spacing:2px">&nbsp;</div>
 </div>
 <div id="boot">
   <div id="bootLogo">J.A.R.V.I.S</div>
-  <div id="bootSub">HERMES NEURAL INTERFACE</div>
+  <div id="bootSub">HERMES 神经接口</div>
   <div id="bootLines"></div>
 </div>
 <div id="grid">
   <header>
     <h1>J.A.R.V.I.S</h1>
-    <div class="sub">HERMES AGENT INTERFACE &nbsp;//&nbsp; <span id="connState">LINK DOWN</span></div>
-    <div id="clock">--:--:--</div>
+    <div class="hdr-right">
+      <div class="sub">HERMES 智能体界面 &nbsp;//&nbsp; <span id="connState">连接断开</span></div>
+      <button class="btn ghost" id="toggleLeft" title="折叠 / 展开左栏">⟨ 左栏</button>
+      <button class="btn ghost" id="toggleRight" title="折叠 / 展开右栏">右栏 ⟩</button>
+      <div id="clock">--:--:--</div>
+    </div>
   </header>
+  <div class="col-tab left" data-side="left" role="button" tabindex="0" title="展开左栏" aria-label="展开左栏">左栏 ▸</div>
+  <div class="col-tab right" data-side="right" role="button" tabindex="0" title="展开右栏" aria-label="展开右栏">◂ 右栏</div>
 
-  <!-- LEFT COLUMN -->
-  <div class="col">
-    <div class="panel"><h2><span>VOICE LINK</span><span class="num">01</span></h2>
-      <div class="kv"><span><span class="dot" id="wsDot"></span>Socket</span><b id="wsState">offline</b></div>
-      <div class="kv"><span><span class="dot" id="micDot"></span>Microphone</span><b id="micState">idle</b></div>
-      <div class="kv"><span>Input level</span><b>&nbsp;</b></div>
+  <!-- 左栏 -->
+  <div class="col" id="colLeft">
+    <div class="panel"><h2><span>语音链路</span><span class="num">01</span></h2>
+      <div class="kv"><span><span class="dot" id="wsDot"></span>连接</span><b id="wsState">离线</b></div>
+      <div class="kv"><span><span class="dot" id="micDot"></span>麦克风</span><b id="micState">待命</b></div>
+      <div class="kv"><span>输入电平</span><b>&nbsp;</b></div>
       <div class="bar"><i id="levelBar"></i></div>
       <div style="margin-top:8px; display:flex; gap:6px">
-        <button class="btn" id="talkBtn" style="flex:1">ENGAGE VOICE</button>
-        <button class="btn danger" id="stopBtn">■ STOP</button>
+        <button class="btn" id="talkBtn" style="flex:1">开始语音</button>
+        <button class="btn danger" id="stopBtn">■ 停止</button>
       </div>
     </div>
-    <div class="panel"><h2><span>AGENT ACTIVITY</span><span class="num">02</span></h2>
-      <div id="activity"><div>— no activity yet —</div></div>
+    <div class="panel"><h2><span>智能体动态</span><span class="num">02</span></h2>
+      <div id="activity"><div>— 暂无动态 —</div></div>
     </div>
-    <div class="panel"><h2><span>TURN METRICS</span><span class="num">03</span></h2>
-      <div class="kv"><span>Turns</span><b id="mTurns">0</b></div>
-      <div class="kv"><span>Last: speech→audio</span><b id="mFirst">—</b></div>
-      <div class="kv"><span>Last: total</span><b id="mTotal">—</b></div>
-      <div class="kv"><span>Brain</span><b id="mBrain">—</b></div>
+    <div class="panel"><h2><span>轮次指标</span><span class="num">03</span></h2>
+      <div class="kv"><span>轮次</span><b id="mTurns">0</b></div>
+      <div class="kv"><span>上次：语音→音频</span><b id="mFirst">—</b></div>
+      <div class="kv"><span>上次：总计</span><b id="mTotal">—</b></div>
+      <div class="kv"><span>大脑</span><b id="mBrain">—</b></div>
     </div>
-    <div class="panel"><h2><span>VIEWS</span><span class="num">04</span></h2>
-      <button class="btn viewBtn" onclick="openView('KANBAN','/kanban')">▸ KANBAN BOARD</button>
-      <button class="btn viewBtn" onclick="openView('HERMES DASHBOARD','/')">▸ HERMES DASHBOARD</button>
-      <button class="btn viewBtn" onclick="openView('CHAT','/chat')">▸ DASHBOARD CHAT</button>
+    <div class="panel"><h2><span>视图</span><span class="num">04</span></h2>
+      <button class="btn viewBtn" onclick="openView('看板','/kanban')">▸ 看板</button>
+      <button class="btn viewBtn" onclick="openView('HERMES 控制台','/')">▸ HERMES 控制台</button>
+      <button class="btn viewBtn" onclick="openView('控制台对话','/chat')">▸ 控制台对话</button>
     </div>
-    <div class="panel"><h2><span>SESSION</span><span class="num">05</span></h2>
-      <div class="kv"><span>Conversation</span><b>jarvis-main</b></div>
-      <div class="kv"><span>Memory scope</span><b>jarvis:user:main</b></div>
-      <div class="kv"><span>Active sessions</span><b id="hSessions">—</b></div>
-      <div class="kv"><span>Running agents</span><b id="hAgents">—</b></div>
+    <div class="panel"><h2><span>会话</span><span class="num">05</span></h2>
+      <div class="kv"><span>对话</span><b>jarvis-main</b></div>
+      <div class="kv"><span>记忆范围</span><b>jarvis:user:main</b></div>
+      <div class="kv"><span>活动会话</span><b id="hSessions">—</b></div>
+      <div class="kv"><span>运行中的智能体</span><b id="hAgents">—</b></div>
     </div>
   </div>
 
-  <!-- CENTER -->
+  <!-- 中央 -->
   <div id="center">
-    <div id="approvals"></div>
-    <div id="reactorWrap" title="Click to talk">
-      <canvas id="reactor"></canvas>
-      <div id="coreState"><div class="st" id="stateLabel">STANDBY</div><div class="hint" id="stateHint">CLICK RING OR SPACE TO TALK</div></div>
+    <div id="approvals" role="alert"></div>
+    <div id="reactorWrap" title="点击说话" role="button" tabindex="0" aria-label="点击或按回车开始语音对话">
+      <div class="avatar-window">
+        <div class="character-rig">
+          <img class="helmet-character" src="assets/jarvis-character.png" alt="JARVIS">
+          <div class="character-aura"></div>
+          <div class="helmet-scan"></div>
+        </div>
+        <div class="reticle"></div>
+        <div class="voice-ring"></div>
+        <div class="ring-two"></div>
+        <canvas id="particle-field" class="particle-field"></canvas>
+      </div>
+      <div id="coreState"><div class="st" id="stateLabel">待命</div><div class="hint" id="stateHint">点击圆环或空格开始对话</div></div>
     </div>
-    <div id="feed"></div>
+    <div id="feed" aria-live="polite"></div>
     <div id="chatRow">
-      <input id="chatInput" placeholder="Type to Hermes… (/new resets · voice: click the ring)" autocomplete="off">
-      <button class="btn" id="sendBtn">SEND</button>
-      <button class="btn" id="clearBtn" title="Clear the visible chat (history stays in Hermes)">CLR</button>
+      <input id="chatInput" placeholder="向 Hermes 输入…（/new 重置 · 语音：点击圆环）" autocomplete="off">
+      <button class="btn" id="sendBtn">发送</button>
+      <button class="btn" id="clearBtn" title="清空当前对话（历史仍保留在 Hermes）">清屏</button>
     </div>
   </div>
 
-  <!-- RIGHT COLUMN -->
-  <div class="col">
-    <div class="panel"><h2><span>MODELS LOADOUT</span><span class="num">06</span></h2>
-      <div class="kv"><span>Brain</span><b>hermes-agent</b></div>
-      <div class="kv"><span>STT</span><b>whisper base.en</b></div>
-      <div class="kv"><span>TTS</span><b>ElevenLabs Flash v2.5</b></div>
-      <div class="kv"><span>Fallback</span><b>claude-haiku-4-5</b></div>
+  <!-- 右栏 -->
+  <div class="col" id="colRight">
+    <div class="panel"><h2><span>模型配置</span><span class="num">06</span></h2>
+      <div class="kv"><span>大脑</span><b>hermes-agent</b></div>
+      <div class="kv"><span>语音识别</span><b>whisper small · 多语言</b></div>
+      <div class="kv"><span>语音合成</span><b>微软 edge-tts · 男声</b></div>
+      <div class="kv"><span>备用</span><b>claude-haiku-4-5</b></div>
       <div style="border-top:1px solid var(--line); margin:6px 0 4px"></div>
-      <div class="kv"><span>Tokens today</span><b id="uTok">—</b></div>
-      <div class="kv" id="uCostRow" style="display:none"><span>Est. cost today</span><b id="uCost">—</b></div>
-      <div class="kv"><span>Turns today</span><b id="uTurns">—</b></div>
-      <div class="kv"><span>11Labs quota</span><b id="uTts">—</b></div>
+      <div class="kv"><span>今日令牌</span><b id="uTok">—</b></div>
+      <div class="kv" id="uCostRow" style="display:none"><span>今日预估费用</span><b id="uCost">—</b></div>
+      <div class="kv"><span>今日轮次</span><b id="uTurns">—</b></div>
+      <div class="kv"><span>11Labs 配额</span><b id="uTts">—</b></div>
       <div class="bar"><i id="ttsBar"></i></div>
     </div>
-    <div class="panel"><h2><span>MACHINES</span><span class="num">07</span></h2>
-      <div id="machinesList"><div class="kv"><span>loading…</span></div></div>
+    <div class="panel"><h2><span>设备</span><span class="num">07</span></h2>
+      <div id="machinesList"><div class="kv"><span>加载中…</span></div></div>
     </div>
-    <div class="panel"><h2><span>SKILLS</span><span class="num">08</span></h2>
-      <div class="kv"><span>Loaded skills</span><b id="skillCount">—</b></div>
+    <div class="panel"><h2><span>技能</span><span class="num">08</span></h2>
+      <div class="kv"><span>已加载技能</span><b id="skillCount">—</b></div>
       <div id="skillsList"></div>
     </div>
-    <div class="panel"><h2><span>DIAGNOSTICS</span><span class="num">09</span></h2>
+    <div class="panel"><h2><span>诊断</span><span class="num">09</span></h2>
       <div class="kv"><span><span class="dot" id="apiDot"></span>Hermes API</span><b id="apiState">—</b></div>
       <div class="kv"><span>CPU</span><b id="hCpu">—</b></div>
-      <div class="kv"><span>Memory</span><b id="hMem">—</b></div>
-      <div class="kv"><span>Refreshed</span><b id="hWhen">—</b></div>
+      <div class="kv"><span>内存</span><b id="hMem">—</b></div>
+      <div class="kv"><span>更新于</span><b id="hWhen">—</b></div>
     </div>
-    <div class="panel"><h2><span>AUTOMATIONS</span><span class="num">10</span></h2>
+    <div class="panel"><h2><span>自动化</span><span class="num">10</span></h2>
       <div id="jobsList"><div>—</div></div>
     </div>
   </div>
@@ -343,8 +419,8 @@ footer{
       <div id="viewerBar">
         <h3 id="viewerTitle">KANBAN</h3>
         <div class="vbtns">
-          <button class="btn" id="viewerPop">OPEN TAB</button>
-          <button class="btn danger" id="viewerClose">✕ CLOSE</button>
+          <button class="btn" id="viewerPop">新标签打开</button>
+          <button class="btn danger" id="viewerClose">✕ 关闭</button>
         </div>
       </div>
       <iframe id="viewerIframe" src="about:blank" title="view"></iframe>
@@ -353,8 +429,8 @@ footer{
 
   <footer>
     <span></span>
-    <span id="footMsg">READY</span>
-    <span>NOUS HERMES AGENT v0.16</span>
+    <span id="footMsg">就绪</span>
+    <span>NOUS HERMES 智能体 v0.16</span>
   </footer>
 </div>
 
@@ -373,60 +449,14 @@ const feed=$("feed");
 /* ============================== clock ============================== */
 setInterval(()=>{const d=new Date();$("clock").textContent=d.toTimeString().slice(0,8)},500);
 
-/* ============================== reactor ============================ */
-const cv=$("reactor"), ctx=cv.getContext("2d");
-function sizeCanvas(){const r=cv.parentElement.getBoundingClientRect();cv.width=r.width*devicePixelRatio;cv.height=r.height*devicePixelRatio}
-sizeCanvas(); addEventListener("resize",sizeCanvas);
-let rot=0;
-const STATE_STYLE={
-  standby:{speed:.15,color:"#00e5ff",glow:18,pulse:0},
-  listening:{speed:.5,color:"#19f0d8",glow:30,pulse:1},
-  thinking:{speed:1.6,color:"#ffb300",glow:26,pulse:.4},
-  tool:{speed:2.4,color:"#ffb300",glow:32,pulse:.6},
-  speaking:{speed:.7,color:"#00e5ff",glow:34,pulse:.8},
-  error:{speed:.05,color:"#ff4d5e",glow:22,pulse:0},
-};
-function drawRing(cx,cy,r,w,color,alpha,dash,offset){
-  ctx.beginPath(); ctx.strokeStyle=color; ctx.globalAlpha=alpha; ctx.lineWidth=w;
-  if(dash)ctx.setLineDash(dash); else ctx.setLineDash([]);
-  ctx.lineDashOffset=offset||0;
-  ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke(); ctx.globalAlpha=1; ctx.setLineDash([]);
-}
-function frame(t){
-  const s=STATE_STYLE[state]||STATE_STYLE.standby;
-  rot+=s.speed;
-  const W=cv.width,H=cv.height,cx=W/2,cy=H/2;
-  const base=Math.min(W,H)*0.40;
-  ctx.clearRect(0,0,W,H);
-  ctx.shadowColor=s.color; ctx.shadowBlur=s.glow*devicePixelRatio;
-  const pulse=1+Math.sin(t/300)*0.012*(1+s.pulse*3)+(state==="listening"?level*0.10:0);
-  drawRing(cx,cy,base*pulse,2*devicePixelRatio,s.color,.9);
-  drawRing(cx,cy,base*.86,1.2*devicePixelRatio,s.color,.45,[40,18],rot*2);
-  drawRing(cx,cy,base*.72,5*devicePixelRatio,s.color,.25,[4,10],-rot*3);
-  drawRing(cx,cy,base*.58,1.5*devicePixelRatio,s.color,.6,[90,40],rot*1.2);
-  // ticks
-  ctx.shadowBlur=0;
-  for(let i=0;i<60;i++){
-    const a=(i/60)*Math.PI*2+rot/180;
-    const r1=base*1.06,r2=base*(i%5===0?1.12:1.09);
-    ctx.beginPath(); ctx.strokeStyle=s.color; ctx.globalAlpha=i%5===0?.8:.3;
-    ctx.lineWidth=devicePixelRatio;
-    ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);
-    ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke();
-  }
-  ctx.globalAlpha=1;
-  // core
-  ctx.shadowColor=s.color; ctx.shadowBlur=40*devicePixelRatio;
-  const g=ctx.createRadialGradient(cx,cy,0,cx,cy,base*.42);
-  g.addColorStop(0,s.color+"55"); g.addColorStop(1,"transparent");
-  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,base*.42,0,Math.PI*2); ctx.fill();
-  ctx.shadowBlur=0;
-  requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
-
+/* ============================== reactor (JARVIS face) ==================
+   The center canvas is a Three.js WebGL scene (module script at the bottom of
+   <body>): a forward-facing helmet/mask built procedurally. Its eyes glow with
+   agent state and its mouth lip-syncs live audio. `window.jarvisState` (kept in
+   sync below by setState) drives the animation loop. */
 function setState(st,label,hint){
   state=st;
+  window.jarvisState=st;          // drives the JARVIS face animation loop
   $("stateLabel").textContent=label;
   if(hint!==undefined)$("stateHint").textContent=hint;
 }
@@ -469,21 +499,21 @@ function showApproval(e){
   const id=data.approval_id||data.id||"";
   const desc=data.preview||data.command||data.description||JSON.stringify(data).slice(0,300);
   const card=document.createElement("div"); card.className="appr";
-  card.innerHTML=`<h3>⚠ APPROVAL REQUIRED</h3><pre>${esc(desc)}</pre>
-    <div class="row"><button class="btn">ALLOW</button><button class="btn danger">DENY</button></div>`;
+  card.innerHTML=`<h3>⚠ 需要批准</h3><pre>${esc(desc)}</pre>
+    <div class="row"><button class="btn">允许</button><button class="btn danger">拒绝</button></div>`;
   const [allowB,denyB]=card.querySelectorAll("button");
   const send=dec=>{ if(wsReady)ws.send(JSON.stringify({type:"approval_decision",run_id:e.run_id||currentRun,approval_id:id,decision:dec})); card.remove(); };
   allowB.onclick=()=>send("allow"); denyB.onclick=()=>send("deny");
   $("approvals").appendChild(card);
-  addActivity("approval requested");
+  addActivity("收到批准请求");
 }
 
 /* ============================== websocket ========================== */
 function wsUrl(){return (location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws"}
 function connect(){
   ws=new WebSocket(wsUrl()); ws.binaryType="arraybuffer";
-  ws.onopen=()=>{wsReady=true;$("wsDot").className="dot on";$("wsState").textContent="online";$("connState").textContent="LINK ACTIVE";$("footMsg").textContent="VOICE SERVER CONNECTED"};
-  ws.onclose=()=>{wsReady=false;$("wsDot").className="dot off";$("wsState").textContent="offline";$("connState").textContent="LINK DOWN";setState("standby","STANDBY");setTimeout(connect,3000)};
+  ws.onopen=()=>{wsReady=true;$("wsDot").className="dot on";$("wsState").textContent="在线";$("connState").textContent="连接已建立";$("footMsg").textContent="语音服务已连接"};
+  ws.onclose=()=>{wsReady=false;$("wsDot").className="dot off";$("wsState").textContent="离线";$("connState").textContent="连接断开";setState("standby","待命");setTimeout(connect,3000)};
   ws.onerror=()=>{};
   ws.onmessage=ev=>{
     if(ev.data instanceof ArrayBuffer){playChunk(ev.data);return}
@@ -495,12 +525,12 @@ function connect(){
     else if(e.type==="run_started"){ currentRun=e.run_id; showStop(true); }
     else if(e.type==="approval_request"){ showApproval(e); }
     else if(e.type==="agent_status"){
-      if(e.state==="thinking"){setState("thinking","PROCESSING");showStop(true)}
-      else if(e.state==="tool_use"){setState("tool","WORKING");addActivity("",e.tool||"tool",e.preview)}
-      else if(e.state==="speaking")setState("speaking","SPEAKING");
-      else if(e.state==="stopped"){setState("standby","STANDBY");showStop(false);stopPlayback();addMsg("sys","run stopped")}
+      if(e.state==="thinking"){setState("thinking","处理中");showStop(true)}
+      else if(e.state==="tool_use"){setState("tool","工作中");addActivity("",e.tool||"tool",e.preview)}
+      else if(e.state==="speaking")setState("speaking","播报中");
+      else if(e.state==="stopped"){setState("standby","待命");showStop(false);stopPlayback();addMsg("sys","已停止")}
     }
-    else if(e.type==="error"){ clearLive(); addMsg("sys","error: "+e.message); setState("standby","STANDBY"); showStop(false); }
+    else if(e.type==="error"){ clearLive(); addMsg("sys","错误："+e.message); setState("standby","待命"); showStop(false); }
     else if(e.type==="done"){
       currentRun=null; showStop(false);
       const tm=e.timing||{};
@@ -509,7 +539,7 @@ function connect(){
       if(tm.total_turn_seconds!=null)$("mTotal").textContent=tm.total_turn_seconds+"s";
       $("mBrain").textContent=tm.llm_provider||"—";
       if(tm.response_text)addMsg("jarvis",tm.response_text);
-      setTimeout(()=>{if(state!=="listening")setState("standby","STANDBY")},400);
+      setTimeout(()=>{if(state!=="listening")setState("standby","待命")},400);
     }
   };
 }
@@ -520,6 +550,15 @@ function ensureCtx(){
   if(!audioCtx){
     try{ audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000}); }
     catch{ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }
+  }
+  // Shared analyser so the HUD face can lip-sync to ACTUAL played audio.
+  // Speech sources (and the boot greeting) connect through it; it taps the
+  // live waveform and exposes window.speechAnalyser for the 3D animate() loop.
+  if(!window.speechAnalyser && audioCtx){
+    const an = audioCtx.createAnalyser();
+    an.fftSize = 512; an.smoothingTimeConstant = 0.6;
+    an.connect(audioCtx.destination);
+    window.speechAnalyser = an;
   }
   if(audioCtx.state==="suspended")audioCtx.resume();
 }
@@ -533,7 +572,7 @@ function playChunk(buf){
   const f32=new Float32Array(i16.length);
   for(let i=0;i<i16.length;i++)f32[i]=i16[i]/32768;
   const ab=audioCtx.createBuffer(1,f32.length,16000); ab.copyToChannel(f32,0);
-  const src=audioCtx.createBufferSource(); src.buffer=ab; src.connect(audioCtx.destination);
+  const src=audioCtx.createBufferSource(); src.buffer=ab; src.connect(window.speechAnalyser || audioCtx.destination);
   const t=Math.max(audioCtx.currentTime+0.06,playhead);
   src.start(t); playhead=t+ab.duration;
   activeSources.push(src); src.onended=()=>{activeSources=activeSources.filter(x=>x!==src)};
@@ -584,33 +623,40 @@ async function initMic(){
       const a=new Int16Array(e.data); let s=0;
       for(let i=0;i<a.length;i+=8)s+=Math.abs(a[i]);
       level=Math.min(1,(s/(a.length/8))/9000);
+      window.micLevel=level;
       if(capturing)$("levelBar").style.width=(level*100).toFixed(0)+"%";
     };
     srcNode.connect(workletNode);
+    // Keep the worklet alive: route it through a muted gain to the destination.
+    // Without an output path, some browsers never call process(), so the server
+    // receives silence and STT returns "No transcript detected".
+    const sink=audioCtx.createGain(); sink.gain.value=0;
+    workletNode.connect(sink); sink.connect(audioCtx.destination);
   }
-  $("micDot").className="dot on"; $("micState").textContent="ready";
+  $("micDot").className="dot on"; $("micState").textContent="就绪";
 }
 
 /* ============================== talk flow ========================== */
 async function toggleTalk(){
-  if(!wsReady){addMsg("sys","voice server offline");return}
+  if(!wsReady){addMsg("sys","语音服务未连接，请等待重连后再试");return}
   if(capturing){ // stop talking
     capturing=false;
     ws.send(JSON.stringify({type:"stop"}));
-    $("talkBtn").textContent="ENGAGE VOICE"; $("micState").textContent="ready"; $("levelBar").style.width="0%";
-    setState("thinking","PROCESSING");
+    $("talkBtn").textContent="开始语音"; $("micState").textContent="就绪"; $("levelBar").style.width="0%";
+    setState("thinking","处理中");
     return;
   }
-  try{await initMic()}catch(err){addMsg("sys","mic blocked: "+err.message);return}
+  try{await initMic()}catch(err){console.warn("mic error:",err);addMsg("sys","麦克风不可用：请确认使用 https:// 访问并在浏览器/系统中允许麦克风权限，然后刷新重试（"+err.message+"）");return}
   stopPlayback();                       // barge-in
   audioArrived=false;
   ws.send(JSON.stringify({type:"start",sample_rate:16000,format:"pcm_s16le",channels:1,conversation:CONV}));
   capturing=true;
-  $("talkBtn").textContent="■ STOP & SEND"; $("micState").textContent="LIVE";
-  setState("listening","LISTENING","CLICK AGAIN TO SEND");
+  $("talkBtn").textContent="■ 停止并发送"; $("micState").textContent="收集中";
+  setState("listening","聆听中","再次点击发送");
 }
 $("talkBtn").onclick=toggleTalk;
 $("reactorWrap").onclick=toggleTalk;
+$("reactorWrap").addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();toggleTalk()} });
 $("stopBtn").onclick=stopRun;
 
 /* ---- pop-up viewer ---- */
@@ -634,13 +680,15 @@ addEventListener("keydown",e=>{
   else stopRun();
 });
 addEventListener("keydown",e=>{
-  if(e.code==="Space"&&document.activeElement!==$("chatInput")){e.preventDefault();toggleTalk()}
+  if(e.code==="Space"&&document.activeElement!==$("chatInput")
+     &&!(document.activeElement&&document.activeElement.closest&&document.activeElement.closest('[role="button"]'))){
+    e.preventDefault();toggleTalk()}
 });
 
 /* ============================== typed chat ========================= */
 async function sendChat(){
   const inp=$("chatInput"); const text=inp.value.trim(); if(!text)return;
-  inp.value=""; addMsg("you",text); setState("thinking","PROCESSING");
+  inp.value=""; addMsg("you",text); setState("thinking","处理中");
   try{
     const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({input:text,conversation:CONV})});
@@ -649,28 +697,58 @@ async function sendChat(){
     (j.tools||[]).forEach(t=>addActivity("",t.name,t.preview));
     addMsg("jarvis",j.text||"(no reply)");
     if(/^\/(new|reset|clear)\b/i.test(text)){     // slash reset → also clear the visible feed
-      setTimeout(()=>{feed.innerHTML="";addMsg("sys","conversation reset");},800);
+      setTimeout(()=>{feed.innerHTML="";addMsg("sys","对话已重置");},800);
     }
-  }catch(err){ addMsg("sys","chat error: "+err.message); }
-  if(state!=="listening")setState("standby","STANDBY");
+  }catch(err){ addMsg("sys","对话错误："+err.message); }
+  if(state!=="listening")setState("standby","待命");
 }
 $("sendBtn").onclick=sendChat;
-$("clearBtn").onclick=()=>{feed.innerHTML="";addMsg("sys","chat cleared (history stays in Hermes — type /new to reset the conversation)");};
+$("clearBtn").onclick=()=>{feed.innerHTML="";addMsg("sys","已清屏（历史仍保留在 Hermes 中——输入 /new 可重置整个对话）");};
 $("chatInput").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat()});
+
+/* ---- collapsible side columns (manual fold / unfold, persisted) ---- */
+(function(){
+  const g=$("grid"), L=$("toggleLeft"), R=$("toggleRight");
+  function sync(){
+    const cl=g.classList.contains("collapse-left"), cr=g.classList.contains("collapse-right");
+    L.textContent = cl ? "⟩ 展开左" : "⟨ 左栏";
+    R.textContent = cr ? "右 展开 ⟨" : "右栏 ⟩";
+  }
+  function bind(btn, cls, key){
+    btn.onclick=()=>{ g.classList.toggle(cls);
+      try{ localStorage.setItem(key, g.classList.contains(cls)); }catch(e){}
+      sync(); };
+  }
+  bind(L,"collapse-left","jarvis.hideLeft");
+  bind(R,"collapse-right","jarvis.hideRight");
+  document.querySelectorAll(".col-tab").forEach(t=>{
+    const activate=()=>{ const side=t.dataset.side;
+      g.classList.remove(side==="left"?"collapse-left":"collapse-right");
+      try{ localStorage.setItem(side==="left"?"jarvis.hideLeft":"jarvis.hideRight","false"); }catch(e){}
+      sync(); };
+    t.onclick=activate;
+    t.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();activate();} });
+  });
+  try{
+    if(localStorage.getItem("jarvis.hideLeft")==="true")g.classList.add("collapse-left");
+    if(localStorage.getItem("jarvis.hideRight")==="true")g.classList.add("collapse-right");
+  }catch(e){}
+  sync();
+})();
 
 /* ============================== widgets ============================ */
 async function jget(path){const r=await fetch("/api/hermes"+path);if(!r.ok)throw new Error(r.status);return r.json()}
 async function refreshHealth(){
   try{
     const h=await jget("/health/detailed");
-    $("apiDot").className="dot on"; $("apiState").textContent="online";
+    $("apiDot").className="dot on"; $("apiState").textContent="在线";
     const st=h.sessions||h.session_stats||{}; const rs=h.resources||{};
     $("hSessions").textContent=st.active??st.total??"ok";
     $("hAgents").textContent=h.running_agents??h.agents??"0";
     $("hCpu").textContent=rs.cpu_percent!=null?rs.cpu_percent+"%":"—";
     $("hMem").textContent=rs.memory_percent!=null?rs.memory_percent+"%":(rs.rss||"—");
     $("hWhen").textContent=new Date().toTimeString().slice(0,8);
-  }catch{ $("apiDot").className="dot off"; $("apiState").textContent="offline"; }
+  }catch{ $("apiDot").className="dot off"; $("apiState").textContent="离线"; }
 }
 async function refreshSkills(){
   try{
@@ -683,8 +761,8 @@ async function refreshJobs(){
   try{
     const j=await jget("/api/jobs"); const list=Array.isArray(j)?j:(j.jobs||j.data||[]);
     $("jobsList").innerHTML=list.length?list.slice(0,8).map(x=>
-      `<div>▸ ${x.name||x.prompt?.slice(0,38)||x.id} <span class="${x.paused?"warn":"ok"}">${x.paused?"paused":"on"}</span></div>`).join("")
-      :"<div>— none —</div>";
+      `<div>▸ ${x.name||x.prompt?.slice(0,38)||x.id} <span class="${x.paused?"warn":"ok"}">${x.paused?"已暂停":"运行中"}</span></div>`).join("")
+      :"<div>— 无 —</div>";
   }catch{ $("jobsList").innerHTML="<div>—</div>"; }
 }
 async function refreshMachines(){
@@ -698,9 +776,9 @@ async function refreshMachines(){
       if(m.vram_used!=null&&m.vram_total!=null)bits.push(`VRAM ${m.vram_used}/${m.vram_total}G`);
       if(m.gpu_temp!=null)bits.push(`${m.gpu_temp}°`);
       if(!bits.length&&m.note)bits.push(m.note);
-      return `<div class="kv"><span><span class="dot ${m.online?"on":"off"}"></span>${m.name}</span><b>${bits.join(" · ")||(m.online?"online":"offline")}</b></div>`;
+      return `<div class="kv"><span><span class="dot ${m.online?"on":"off"}"></span>${m.name}</span><b>${bits.join(" · ")||(m.online?"在线":"离线")}</b></div>`;
     }).join("");
-  }catch{ $("machinesList").innerHTML="<div class='kv'><span>unavailable</span></div>"; }
+  }catch{ $("machinesList").innerHTML="<div class='kv'><span>不可用</span></div>"; }
 }
 const fmtK=n=>n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n||0);
 async function refreshUsage(){
@@ -717,7 +795,7 @@ async function refreshUsage(){
       $("ttsBar").style.width=pct+"%";
       $("uTts").className=pct>90?"err":pct>70?"warn":"";
     }else{
-      // quota API unavailable (key needs user_read permission) → local tally
+      // quota API 不可用 (key needs user_read permission) → local tally
       $("uTts").textContent=fmtK(t.tts_chars||0)+" chars today";
       $("ttsBar").style.width="0%";
     }
@@ -763,7 +841,7 @@ function embedURL(src){
 let lastSummon={key:"",t:0};
 function summonPanel(opts){
   const o=opts||{};
-  const media=o.media||o.type||"iframe", src=o.src||"", title=(o.title||"INCOMING FEED").toUpperCase();
+  const media=o.media||o.type||"iframe", src=o.src||"", title=(o.title||"接入信号").toUpperCase();
   // dedupe: stale WS reconnects can deliver the same broadcast multiple times
   const key=media+"|"+src+"|"+title;
   if(key===lastSummon.key && Date.now()-lastSummon.t<8000) return null;
@@ -803,7 +881,7 @@ function summonPanel(opts){
     if(e.animationName==="holoDismiss") p.remove();
   });
   p.querySelector(".hx").onclick=()=>dismissPanel(p);
-  addActivity("hologram: "+title.toLowerCase());
+  addActivity("全息面板："+title.toLowerCase());
   return p;
 }
 function dismissPanel(p){
@@ -832,7 +910,7 @@ $("pinBtn").onclick=async()=>{
   const v=$("pinInput").value.trim(); if(!v)return;
   document.cookie=`jarvis_token=${encodeURIComponent(v)}; path=/; max-age=31536000; secure; samesite=lax`;
   const r=await fetch("/api/usage");
-  if(r.status===401){$("pinMsg").textContent="ACCESS DENIED";$("pinInput").value="";return}
+  if(r.status===401){$("pinMsg").textContent="密码错误，请核对 JARVIS_HUD_TOKEN（见主机 ~/.hermes/.env）";$("pinInput").value="";return}
   location.reload();
 };
 $("pinInput")&&$("pinInput").addEventListener("keydown",e=>{if(e.key==="Enter")$("pinBtn").click()});
@@ -841,10 +919,10 @@ checkAuth();
 /* ============================== boot sequence ====================== */
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const BOOT_LINES=[
-  ["INITIALIZING NEURAL INTERFACE",380],["LOADING HUD MODULES",300],
-  ["CONNECTING HERMES CORE",650],["VOICE LINK ESTABLISHED",420],
-  ["MEMORY SYSTEMS SYNCHRONIZED",420],["WEAPONS OFFLINE. KETTLE ONLINE.",300],
-  ["ALL SYSTEMS NOMINAL",550],
+  ["初始化神经接口",380],["加载 HUD 模块",300],
+  ["连接 HERMES 核心",650],["语音链路已建立",420],
+  ["记忆系统已同步",420],["武器离线。水壶在线。",300],
+  ["所有系统就绪",550],
 ];
 let bootRunning=false;
 async function bootSequence(full){
@@ -855,7 +933,7 @@ async function bootSequence(full){
   const bl=$("bootLines"); bl.innerHTML="";
   const scale=full?1:0.32;
   for(const [t,d] of BOOT_LINES){
-    if(!full&&t.startsWith("WEAPONS"))continue;   // easter egg only in full boot
+    if(!full&&t.startsWith("武器"))continue;   // easter egg only in full boot
     const div=document.createElement("div"); div.innerHTML="▸ "+t+" <b>OK</b>";
     bl.appendChild(div); await sleep(d*scale);
   }
@@ -864,22 +942,143 @@ async function bootSequence(full){
   document.querySelectorAll(".panel").forEach((p,i)=>p.style.animationDelay=(120+i*95)+"ms");
   boot.classList.add("done");
   document.body.classList.remove("booting"); document.body.classList.add("booted");
-  if(full){
-    try{
-      const h=new Date().getHours();
-      const f=h<12?"morning":h<18?"afternoon":"evening";
-      await new Audio("audio/boot_"+f+".mp3").play();
-    }catch{/* audio needs a user gesture; B-key boots always have one */}
-  }
   setTimeout(()=>{boot.style.display="none"},900);
   bootRunning=false;
+}
+/* ---- boot greeting voice (free neural edge-tts .wav) ----
+   Browsers block autoplay, so we play the greeting on the user's FIRST
+   interaction (click / keypress). The B-key "full boot" also counts as a gesture.
+   The greeting is routed through the shared speech analyser so the HUD mouth
+   lip-syncs it exactly like a live reply. */
+let greeted=false, greetingCleanup=null;
+function armGreeting(){
+  const once=()=>playBootGreeting();
+  greetingCleanup=()=>{
+    document.removeEventListener("pointerdown",once);
+    document.removeEventListener("keydown",once);
+  };
+  document.addEventListener("pointerdown",once);
+  document.addEventListener("keydown",once);
+}
+function playBootGreeting(){
+  if(greeted)return; greeted=true;
+  if(greetingCleanup)greetingCleanup();
+  try{
+    const h=new Date().getHours();
+    const f=h<12?"morning":h<18?"afternoon":"evening";
+    ensureCtx();                                  // unlock audio + create the analyser
+    const a=new Audio("audio/boot_"+f+".wav");
+    try{                                          // route through analyser for lip-sync
+      const node=audioCtx.createMediaElementSource(a);
+      node.connect(window.speechAnalyser || audioCtx.destination);
+    }catch(e){}
+    a.play().catch(()=>{});                        // first gesture guarantees it isn't blocked
+  }catch{}
 }
 addEventListener("keydown",e=>{
   if((e.key==="b"||e.key==="B")&&document.activeElement!==$("chatInput"))bootSequence(true);
 });
 bootSequence(new URLSearchParams(location.search).get("boot")==="full");
-
-addMsg("sys","Jarvis HUD online. Click the ring or press Space to talk.");
+armGreeting();   // greet on the first click / keypress (respects autoplay policy)
+addMsg("sys","Jarvis HUD 已上线。点击任意处或按空格开始对话。");
 </script>
+
+<!-- ===================== JARVIS face (Three.js, offline/vendored) ===================== -->
+<!-- No importmap: import three by relative URL so it works in every
+     module-capable browser (Safari < 16.4 has no importmap support). The face is
+     procedural (no external model): a forward-facing helmet/mask whose eyes and
+     mouth react to agent state; the mouth lip-syncs live audio via a shared analyser. -->
+
+<script>
+"use strict";
+/* ---- JARVIS avatar: ion-halo helmet driven by live audio + agent state ----
+   Replaces the old Three.js scene. The voice-reactive glow reads the shared
+   window.speechAnalyser (already fed by every speech source in playChunk /
+   playBootGreeting). State color comes from window.jarvisState. */
+const ACCENT = {
+  standby:  [0,229,255],
+  listening:[25,240,216],
+  thinking: [255,179,0],
+  tool:     [255,179,0],
+  speaking: [0,229,255],
+  error:    [255,77,94],
+};
+const rootStyle = document.documentElement.style;
+const setVar = (n,v) => rootStyle.setProperty(n, v);
+
+/* ---- voice-reactive glow (real played-audio amplitude) ---- */
+function voiceLoop(){
+  let level = 0;
+  const an = window.speechAnalyser;
+  if(an){
+    const buf = new Uint8Array(an.fftSize);
+    an.getByteTimeDomainData(buf);
+    let sum = 0;
+    for(let i=0;i<buf.length;i++){ const v=(buf[i]-128)/128; sum += v*v; }
+    level = Math.sqrt(sum / buf.length);            // RMS 0..1
+  }
+  const g = Math.min(1, 0.32 + level*5*0.6);
+  const p = 1 + Math.min(1, level*5)*0.03;
+  setVar('--voice-glow', g.toFixed(3));
+  setVar('--voice-pulse', p.toFixed(3));
+  requestAnimationFrame(voiceLoop);
+}
+requestAnimationFrame(voiceLoop);
+
+/* ---- agent state -> accent color ---- */
+let lastRgb = null;
+function stateLoop(){
+  const st = window.jarvisState || 'standby';
+  const c = ACCENT[st] || ACCENT.standby;
+  const rgb = c.join(',');                 // only write CSS vars when the state changed
+  if(rgb !== lastRgb){
+    lastRgb = rgb;
+    setVar('--rgb', rgb);
+    setVar('--accent', 'rgb(' + rgb + ')');
+  }
+  requestAnimationFrame(stateLoop);
+}
+requestAnimationFrame(stateLoop);
+
+/* ---- ambient particle field ---- */
+(function(){
+  if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; // reduced motion: no particles
+  const cv = document.getElementById('particle-field');
+  if(!cv) return;
+  const cx = cv.getContext('2d');
+  let W=0, H=0, parts=[];
+  function resize(){
+    const r = cv.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio||1, 1.5);   // cap DPR for perf
+    W = cv.width  = Math.max(1, Math.round(r.width*dpr));
+    H = cv.height = Math.max(1, Math.round(r.height*dpr));
+    cx.setTransform(dpr,0,0,dpr,0,0);
+    const n = Math.max(20, Math.round(r.width*r.height/9000));
+    parts = [];
+    for(let i=0;i<n;i++) parts.push({ x:Math.random()*W/dpr, y:Math.random()*H/dpr,
+      vx:(Math.random()-.5)*.25, vy:(Math.random()-.5)*.25, r:Math.random()*1.6+.4 });
+  }
+  resize();
+  if(window.ResizeObserver) new ResizeObserver(resize).observe(cv);
+  else addEventListener('resize', resize);
+  function draw(){
+    const dpr = Math.min(window.devicePixelRatio||1, 1.5);
+    const wCss = W/dpr, hCss = H/dpr;       // canvas logical (CSS pixel) size
+    cx.clearRect(0,0,W,H);
+    const c = rootStyle.getPropertyValue('--rgb').trim() || '32,199,255';
+    cx.fillStyle = 'rgba(' + c + ',.8)';
+    for(const p of parts){
+      p.x += p.vx; p.y += p.vy;
+      if(p.x<0)p.x+=wCss; if(p.x>wCss)p.x-=wCss;
+      if(p.y<0)p.y+=hCss; if(p.y>hCss)p.y-=hCss;
+      cx.globalAlpha = .35; cx.beginPath(); cx.arc(p.x,p.y,p.r,0,6.283); cx.fill();
+    }
+    cx.globalAlpha = 1;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
+
 </body>
 </html>

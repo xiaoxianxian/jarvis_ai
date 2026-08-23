@@ -39,11 +39,13 @@ stt:
   #   token_env: JARVIS_HUD_TOKEN
   #   timeout: 6
 
-machines:                   # polled by /api/machines for the HUD panel (optional)
-  - name: "GPU WORKER"
-    host: 192.168.1.50
-    stats_url: http://192.168.1.50:8767/stats   # run worker/worker_stats.py there
-    ping_port: 445
+# machines:                  # polled by /api/machines for the HUD panel (optional)
+#   Uncomment and fill in to show live CPU/GPU stats for a remote worker.
+#   Run worker/worker_stats.py on that machine first.
+#   - name: "GPU WORKER"
+#     host: <worker-ip>
+#     stats_url: http://<worker-ip>:8767/stats
+#     ping_port: 445
 
 usage:
   # Your LLM provider's pricing ($ per 1M tokens) for HUD cost estimates. 0 = token counts only.
