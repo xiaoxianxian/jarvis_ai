@@ -39,6 +39,8 @@ from faster_whisper import WhisperModel
 MODEL_NAME = os.environ.get("JARVIS_STT_MODEL", "large-v3-turbo")
 TOKEN = os.environ.get("JARVIS_STT_TOKEN", "")
 PORT = int(os.environ.get("JARVIS_STT_PORT", "8768"))
+# Language for transcription: JARVIS_STT_LANGUAGE (e.g. "zh"), unset = auto-detect.
+LANGUAGE = os.environ.get("JARVIS_STT_LANGUAGE") or None
 
 print(f"Loading {MODEL_NAME} on CUDA...", flush=True)
 t0 = time.time()
@@ -60,10 +62,12 @@ async def stt(request: Request):
     body = await request.body()
     if len(body) < 3200:  # <0.1s of audio
         return {"text": ""}
+    # Optional per-request override: ?language=zh / en (empty or absent -> auto).
+    req_language = request.query_params.get("language") or LANGUAGE
     audio = np.frombuffer(body[: len(body) // 2 * 2], dtype=np.int16).astype(np.float32) / 32768.0
     t0 = time.time()
     try:
-        segments, _info = model.transcribe(audio, language="en", beam_size=1, vad_filter=False)
+        segments, _info = model.transcribe(audio, language=req_language, beam_size=1, vad_filter=False)
         text = " ".join(s.text.strip() for s in segments).strip()
     except Exception as exc:  # silence/garbage audio -> empty transcript, not a 500
         print(f"transcribe error -> empty: {exc}", flush=True)

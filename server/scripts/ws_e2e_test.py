@@ -9,11 +9,12 @@ CONV = sys.argv[2] if len(sys.argv) > 2 else "jarvis-debug"
 URL = "ws://127.0.0.1:8765/ws"
 
 
-async def main():
+async def main() -> int:
     with wave.open(WAV, "rb") as w:
         assert w.getframerate() == 16000 and w.getnchannels() == 1, "need 16k mono"
         pcm = w.readframes(w.getnframes())
     audio_bytes = 0
+    failed = False
     async with websockets.connect(URL, max_size=None) as ws:
         await ws.send(json.dumps({"type": "start", "sample_rate": 16000,
                                   "format": "pcm_s16le", "channels": 1,
@@ -53,7 +54,9 @@ async def main():
                 if ev.get("state") == "stopped":
                     print("STOPPED_OK"); break
             elif t == "error":
-                print("ERROR:", ev.get("message")); break
+                print("ERROR:", ev.get("message"))
+                failed = True
+                break
             elif t == "done":
                 tm = ev.get("timing", {})
                 print("RESPONSE:", (tm.get("response_text") or "")[:400])
@@ -63,5 +66,13 @@ async def main():
                 print("LATENCY eos->first_audio:", tm.get("end_of_speech_to_first_audio_seconds"),
                       "total:", tm.get("total_turn_seconds"))
                 break
+        else:
+            # Server closed the connection without done/error — treat as failure.
+            print("FAIL: connection closed before done")
+            failed = True
+    if failed:
+        return 1
+    return 0
 
-asyncio.run(main())
+
+sys.exit(asyncio.run(main()))

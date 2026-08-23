@@ -9,8 +9,9 @@ startup (~40 s). `scripts/jarvis-health.sh` until all rows are OK.
 
 **"Agent backend offline. Running in basic mode."** — the Hermes API server
 isn't reachable. Check `API_SERVER_ENABLED/KEY` in `~/.hermes/.env` and that
-`hermes gateway` is running; verify with `curl -H "Authorization: Bearer $KEY"
-http://127.0.0.1:8642/health`.
+`hermes gateway` is running; verify with `curl -H "Authorization: Bearer $KEY"`
+(where `KEY=$(grep '^API_SERVER_KEY=' ~/.hermes/.env | cut -d= -f2)`)
+against `http://127.0.0.1:8642/health`.
 
 **Transcripts are wrong/garbled words** — make sure you're on the current HUD
 (hard refresh): mic must capture at 16 kHz natively. Upgrading `stt.model` to
@@ -78,3 +79,28 @@ instructions don't beat tool schemas; the plugin does.
 **Phone can't reach jarvis.local** — some Android versions lack mDNS; use the
 raw IP (and add it to `security.extra_origin_hosts` in server.yaml so the
 WebSocket origin check accepts it).
+
+**Clicked the ring but nothing happens / recording starts by accident** — the
+ring needs a full click (press + release) on it; a quick Space press also
+toggles recording, so typing elsewhere while the HUD has focus can trigger it.
+Symptoms: no transcript appears after clicking, or a transcript appears with
+only silence/keyboard noise. Fixes: (1) click directly on the ring and click
+again to send — watch for the ring's color change to confirm it's listening;
+(2) don't hold or mash Space, one tap toggles recording on and off; (3) if the
+mic permission prompt appeared and was dismissed, re-grant mic access in the
+browser's site settings and reload.
+
+**Boot greeting doesn't play** — the greeting is pre-synthesized audio in
+`hud/audio/boot_{morning,afternoon,evening}.wav`; if those files are missing,
+the boot animation runs silently. Fix: run `scripts/make-boot-audio.sh`
+(once, from `server/`) and check the files exist. If they exist but you hear
+nothing: the browser blocks autoplay of audio until you've interacted with the
+page — click anywhere (or enter your token) before pressing `B`, and make sure
+device volume/output isn't muted.
+
+**HUD shows config info that doesn't match my actual setup** — parts of the
+HUD's right column are static copy baked into the interface, not live values
+read from `server.yaml`. If you changed e.g. the model name, voice, or host in
+your config and the HUD still shows different text, trust the server logs and
+`scripts/jarvis-health.sh` output over the panel text. The panel is cosmetic;
+no action needed beyond knowing which fields are static.

@@ -2,6 +2,12 @@
 
 Tested on macOS (Apple Silicon) with Hermes Agent v0.16. Allow ~1 hour.
 
+> **Prerequisites:** Python 3.11+ (check with `python3 --version`). The first
+> install of `RealtimeSTT` pulls in PyTorch, which is a large download (~2 GB)
+> — let it finish; subsequent installs are incremental. macOS may also pop up a
+> firewall prompt the first time the server listens on a port — click *Allow*
+> or inbound connections from your LAN devices will be dropped.
+
 ## 1. Hermes Agent (the brain)
 
 Install Hermes Agent and give it an LLM provider — follow the
@@ -28,10 +34,15 @@ Recommended: add voice-behavior rules to your global `~/.hermes/SOUL.md`
 actions and wait for approval). The agent — not the voice server — should own
 its personality.
 
-## 2. ElevenLabs (the voice)
+## 2. Voice output (no API key needed) / ElevenLabs (optional upgrade)
 
-Create an API key at elevenlabs.io and pick a voice from their library, noting
-its `voice_id`. Add to `~/.hermes/.env`:
+By default the server speaks with **zero API keys**: Chinese text goes through
+free Microsoft neural TTS (`edge-tts`, male voice `zh-CN-YunyangNeural`) with
+an offline fallback; English uses the built-in macOS `say` voice.
+
+Optionally, for higher-quality streaming voices you can use
+[ElevenLabs](https://elevenlabs.io): create an API key at elevenlabs.io and
+pick a voice from their library, noting its `voice_id`. Add to `~/.hermes/.env`:
 
 ```bash
 ELEVENLABS_API_KEY=...
@@ -44,8 +55,7 @@ For the HUD's quota bar, give the key the **User → Read** permission.
 ```bash
 cd server
 python3 -m venv .venv
-.venv/bin/pip install fastapi uvicorn requests pyyaml numpy anthropic \
-    RealtimeSTT faster-whisper silero-vad websockets psutil
+.venv/bin/pip install -r requirements.txt
 cp config/server.example.yaml config/server.yaml
 ```
 
@@ -78,13 +88,14 @@ Port 443 needs the wildcard bind already set in the example config.
 ### HUD access token
 
 ```bash
-echo "JARVIS_HUD_TOKEN=jarvis-$(python3 -c 'import secrets;print(secrets.token_hex(3))')" >> ~/.hermes/.env
+echo "JARVIS_HUD_TOKEN=jarvis-$(python3 -c 'import secrets;print(secrets.token_hex(8))')" >> ~/.hermes/.env
 ```
 
-The HUD asks for this once per device. Omit the variable entirely to disable
-auth (not recommended).
+This value is the access code you type into the HUD login page. If you forget
+it, look it up in `~/.hermes/.env`. The HUD asks for it once per device. Omit
+the variable entirely to disable auth (not recommended).
 
-### Boot greeting (one-time, ~110 ElevenLabs characters)
+### Boot greeting (one-time)
 
 ```bash
 scripts/make-boot-audio.sh YourFirstName
