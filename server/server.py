@@ -359,10 +359,27 @@ class VoicePipelineServer:
                 text = await asyncio.to_thread(self.recorder.perform_final_transcription, samples, True)
                 self.recorder.clear_audio_queue()
         except Exception as exc:
-            # near-silent audio can make whisper raise ("No clip timestamps found");
-            # treat as empty transcript instead of failing the turn
-            print(f"local STT error treated as empty transcript: {exc}", flush=True)
-            text = ""
+            # near-silent audio and long clips (>~30 s) can make whisper raise
+            # ("No clip timestamps found" — vad_filter is disabled by design,
+            # and RealtimeSTT's API offers no clip_timestamps passthrough).
+            # Retry once in <=25 s chunks; if that also fails, treat as empty
+            # transcript instead of failing the turn.
+            print(f"local STT retry in 25s chunks ({type(exc).__name__}): {exc}", flush=True)
+            try:
+                chunk_len = int(sample_rate * 25)
+                parts: list[str] = []
+                async with self.stt_lock:
+                    for i in range(0, len(samples), chunk_len):
+                        piece = samples[i:i + chunk_len]
+                        part = await asyncio.to_thread(
+                            self.recorder.perform_final_transcription, piece, False)
+                        if part and part.strip():
+                            parts.append(part.strip())
+                    self.recorder.clear_audio_queue()
+                text = " ".join(parts)
+            except Exception as exc2:
+                print(f"local STT error treated as empty transcript: {exc2}", flush=True)
+                text = ""
         if timing:
             timing.stt_final_monotonic = time.perf_counter()
         return (text or "").strip()
@@ -1407,8 +1424,17 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     try:
         while True:
             message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
             if "text" in message and message["text"] is not None:
-                event = json.loads(message["text"])
+                try:
+                    event = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    await ws.send_json({"type": "error", "message": "Malformed JSON event."})
+                    continue
+                if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+                    await ws.send_json({"type": "error", "message": "Event missing valid type field."})
+                    continue
                 etype = event.get("type")
                 if etype == "start":
                     await _cancel_active_turn(ws, pipeline, conn)  # barge-in
@@ -1454,6 +1480,16 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         if conn.turn_task and not conn.turn_task.done():
             conn.turn_task.cancel()
         print("Client disconnected", flush=True)
+    except RuntimeError as exc:
+        # starlette raises RuntimeError('Cannot call "receive" once a
+        # disconnect message has been received.') when the client vanishes
+        # mid-turn; treat it the same as WebSocketDisconnect.
+        if "disconnect" in str(exc).lower():
+            if conn.turn_task and not conn.turn_task.done():
+                conn.turn_task.cancel()
+            print("Client disconnected (runtime)", flush=True)
+        else:
+            raise
     finally:
         WS_CLIENTS.discard(ws)
 
