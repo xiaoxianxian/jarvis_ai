@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-and-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile all Python sources
+        run: |
+          python3 -m py_compile \
+            server/server.py \
+            worker/stt_server.py \
+            worker/worker_stats.py \
+            server/scripts/ws_e2e_test.py \
+            server/tts_edge.py \
+            server/tts_piper.py \
+            hermes-plugin/hud_display/tools.py \
+            hermes-plugin/hud_display/schemas.py
+
+      - name: Shell script syntax
+        run: |
+          for f in server/scripts/*.sh; do bash -n "$f"; done
+
+      - name: YAML parse (example config + workflows)
+        run: |
+          pip install pyyaml --quiet
+          python3 - <<'EOF'
+          import yaml, glob
+          for f in ["server/config/server.example.yaml"] + glob.glob(".github/workflows/*.yml"):
+              yaml.safe_load(open(f, encoding="utf-8"))
+              print("ok:", f)
+          EOF
+
+      - name: Proxy allowlist security tests (no server needed)
+        run: |
+          pip install --quiet fastapi uvicorn requests pyyaml numpy websockets psutil || true
+          # stub heavy imports that aren't needed for the pure functions under test
+          python3 - <<'EOF'
+          import sys, types, unittest.mock as m
+          sys.modules['RealtimeSTT'] = m.MagicMock()
+          sys.modules['anthropic'] = m.MagicMock()
+          sys.modules.update({'uvicorn': m.MagicMock()})
+          import importlib.util, posixpath
+          from urllib.parse import unquote
+
+          ALLOWED_GET_PATHS = {"/health","/health/detailed","/v1/capabilities",
+                               "/v1/skills","/v1/toolsets","/api/jobs","/api/sessions"}
+
+          def _proxy_allowed(method, path):
+              decoded = unquote(path)
+              if decoded != path: return False
+              normalized = posixpath.normpath(path)
+              if ".." in normalized.split("/") or normalized != path: return False
+              if method == "GET":
+                  return normalized in ALLOWED_GET_PATHS or (
+                      normalized.startswith("/api/sessions/") and normalized.endswith("/messages"))
+              if method == "POST":
+                  return normalized == "/v1/responses"
+              return False
+
+          cases = [
+              ("GET", "/health", True),
+              ("GET", "/api/sessions/abc/messages", True),
+              ("POST", "/v1/responses", True),
+              ("GET", "/api/sessions/x/../../../admin/messages", False),
+              ("GET", "/api/sessions/x%2f../../../admin/messages", False),
+              ("GET", "..%2f..%2fadmin%2fmessages", False),
+              ("GET", "//admin/messages", False),
+              ("GET", "/api/sessions/%2e%2e/messages", False),
+              ("POST", "/admin/secret", False),
+              ("DELETE", "/api/sessions", False),
+              ("GET", "/api/hermes/../server/config/server.yaml", False),
+          ]
+          failed = [(m_, p) for m_, p, want in cases if _proxy_allowed(m_, p) != want]
+          for m_, p in failed:
+              print(f"FAIL: {m_} {p!r}")
+          assert not failed, f"{len(failed)} security cases failed"
+          print(f"proxy allowlist: {len(cases)}/{len(cases)} security cases pass")
+          EOF
+
+      - name: requirements.txt sanity
+        run: |
+          python3 - <<'EOF'
+          reqs = [l.strip() for l in open("server/requirements.txt") if l.strip() and not l.startswith("#")]
+          assert len(reqs) >= 10, f"requirements.txt looks too short: {reqs}"
+          print(f"requirements.txt: {len(reqs)} deps listed")
+          EOF
