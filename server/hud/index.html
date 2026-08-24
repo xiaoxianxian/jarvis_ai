@@ -543,7 +543,6 @@ function connect(){
     }
   };
 }
-connect();
 
 /* ============================== audio out ========================== */
 function ensureCtx(){
@@ -897,7 +896,7 @@ window.summonPanel=summonPanel; window.dismissAllPanels=dismissAllPanels;
 /* ============================== auth gate ========================== */
 async function checkAuth(){
   try{
-    const r=await fetch("/api/usage");
+    const r=await fetch("/api/auth/check");
     if(r.status===401){showPinGate();return false}
   }catch{}
   return true;
@@ -909,12 +908,14 @@ function showPinGate(){
 $("pinBtn").onclick=async()=>{
   const v=$("pinInput").value.trim(); if(!v)return;
   document.cookie=`jarvis_token=${encodeURIComponent(v)}; path=/; max-age=31536000; secure; samesite=lax`;
-  const r=await fetch("/api/usage");
+  const r=await fetch("/api/auth/check");
   if(r.status===401){$("pinMsg").textContent="密码错误，请核对 JARVIS_HUD_TOKEN（见主机 ~/.hermes/.env）";$("pinInput").value="";return}
   location.reload();
 };
 $("pinInput")&&$("pinInput").addEventListener("keydown",e=>{if(e.key==="Enter")$("pinBtn").click()});
-checkAuth();
+/* WS 连接必须等认证检查通过后再启动：未认证时服务端 fail-closed 拒绝 WS，
+   提前连接只会显示“连接断开”并无限空转重连 */
+checkAuth().then(ok=>{ if(ok) connect(); });
 
 /* ============================== boot sequence ====================== */
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));

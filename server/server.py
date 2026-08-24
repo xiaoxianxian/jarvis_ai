@@ -266,6 +266,7 @@ class HermesAPI:
     @staticmethod
     def _parse_sse(resp) -> Iterator[tuple[str, str]]:
         event_name = ""
+        saw_text = False
         for raw in resp.iter_lines(decode_unicode=True):
             if raw is None:
                 continue
@@ -285,6 +286,7 @@ class HermesAPI:
             elif ev == "assistant.delta":
                 d = data.get("delta") or ""
                 if d:
+                    saw_text = True
                     yield ("text", d)
             elif ev == "tool.started":
                 name = data.get("tool_name") or "tool"
@@ -294,8 +296,14 @@ class HermesAPI:
             elif "approval" in ev:
                 yield ("approval", json.dumps(data)[:2000])
             elif ev == "assistant.completed":
+                content = data.get("content") or ""
+                # Non-streaming replies (e.g. provider errors surfaced as the
+                # completed content) arrive with no deltas at all — without
+                # this fallback the turn ends silently with an empty response.
+                if not saw_text and content:
+                    yield ("text", content)
                 yield ("final", json.dumps({
-                    "content": data.get("content") or "",
+                    "content": content,
                     "interrupted": bool(data.get("interrupted")),
                 }))
             elif ev in ("run.failed", "error"):
@@ -887,8 +895,12 @@ async def api_auth_middleware(request: Request, call_next):
         if not _request_authed(request):
             if not getattr(api_auth_middleware, "_warned", False):
                 api_auth_middleware._warned = True  # type: ignore[attr-defined]
-                print("WARNING: no HUD token configured — set JARVIS_HUD_TOKEN "
-                      "to enable /api/* and dashboard access", flush=True)
+                if not hud_token():
+                    print("WARNING: no HUD token configured — set JARVIS_HUD_TOKEN "
+                          "to enable /api/* and dashboard access", flush=True)
+                else:
+                    print("Rejected unauthenticated /api/* request "
+                          "(expected for logged-out HUD visits)", flush=True)
             return Response(status_code=401, content="jarvis auth required")
     return await call_next(request)
 
@@ -1078,6 +1090,13 @@ async def usage() -> JSONResponse:
             asyncio.get_running_loop().create_task(refresh())
     out["elevenlabs"] = _ELEVEN_CACHE["data"]
     return JSONResponse(out)
+
+
+@app.get("/api/auth/check")
+async def auth_check() -> JSONResponse:
+    """Auth probe for the HUD PIN gate: the /api/* middleware returns 401
+    here when the request carries no valid token, 200 when it does."""
+    return JSONResponse({"ok": True})
 
 
 WS_CLIENTS: set = set()
