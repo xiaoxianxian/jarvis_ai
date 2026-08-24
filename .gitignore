@@ -7,6 +7,13 @@ server/logs/
 server/hud/audio/
 server/hud/jarvis.cer
 
+# large runtime assets (3D model, TTS onnx, vendored three.js) — fetch or
+# regenerate locally; see docs/SETUP.md
+server/hud/assets/
+server/hud/models/
+server/hud/tts/
+server/hud/vendor/
+
 # worker local files
 worker/run-stt.bat
 worker/stt_server.log
