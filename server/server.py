@@ -22,6 +22,7 @@ and approval events. Falls back to direct Anthropic ("basic mode") if unreachabl
 from __future__ import annotations
 
 import asyncio
+import hmac
 import ipaddress
 import json
 import os
@@ -62,6 +63,14 @@ def _today() -> str:
     return time.strftime("%Y-%m-%d")
 
 
+def _atomic_write_json(path, obj) -> None:
+    """Write JSON via tmp file + os.replace: a crash mid-write can never
+    truncate the previous contents (session map / usage stats survive)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def record_usage(llm_in: int = 0, llm_out: int = 0, turns: int = 0, tts_chars: int = 0) -> None:
     """Accumulate token/character usage into logs/usage_stats.json (total + per-day)."""
     with _USAGE_LOCK:
@@ -79,7 +88,7 @@ def record_usage(llm_in: int = 0, llm_out: int = 0, turns: int = 0, tts_chars: i
         for k in sorted(data["days"])[:-60]:
             del data["days"][k]
         USAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        USAGE_PATH.write_text(json.dumps(data), encoding="utf-8")
+        _atomic_write_json(USAGE_PATH, data)
 
 
 def read_usage() -> dict:
@@ -90,7 +99,7 @@ def read_usage() -> dict:
             data = {"total": {}, "days": {}}
     return {"total": data.get("total", {}), "today": data.get("days", {}).get(_today(), {})}
 ENV_PATHS = [Path.home() / ".hermes" / ".env", ROOT / ".env"]
-SENTENCE_RE = re.compile(r"(.+?[.!?。！？])(?=\s|$|[^\d])", re.DOTALL)
+SENTENCE_RE = re.compile(r"(.+?[.!?。！？])(?=\s|$|(?![A-Za-z0-9]))", re.DOTALL)
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 CODEBLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 # Secret-shaped strings are never sent to cloud TTS (privacy filter):
@@ -207,29 +216,32 @@ class HermesAPI:
 
     def _save_state(self, state: dict) -> None:
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+        _atomic_write_json(STATE_PATH, state)
 
     def get_session_id(self, name: str, force_new: bool = False) -> str:
-        # Serialize the whole read-modify-write of hermes_sessions.json: two WS
-        # connections creating the same conversation concurrently would
-        # otherwise overwrite each other's entry.
+        # Fast path: cached id, no lock, no network.
+        state = self._load_state()
+        sid = state.get(name)
+        if sid and not force_new:
+            return sid
+        # Create OUTSIDE the lock: a slow/unreachable Hermes API must not
+        # serialize every other connection's first turn behind this call.
+        r = requests.post(f"{self.base}/api/sessions", headers=self.headers(),
+                          json={"title": name}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        new_sid = (data.get("session") or data).get("id")
+        # Short critical section: re-read under the lock so we merge into any
+        # entries another thread wrote while we were creating the session.
         with _STATE_LOCK:
             state = self._load_state()
-            sid = state.get(name)
-            if sid and not force_new:
-                return sid
-            r = requests.post(f"{self.base}/api/sessions", headers=self.headers(),
-                              json={"title": name}, timeout=15)
-            r.raise_for_status()
-            data = r.json()
-            sid = (data.get("session") or data).get("id")
-            # Re-read under the lock so we merge into any entries another
-            # thread wrote while we were creating the session.
-            state = self._load_state()
-            state[name] = sid
+            existing = state.get(name)
+            if existing and not force_new:
+                return existing  # another thread won the race; drop ours
+            state[name] = new_sid
             self._save_state(state)
-            print(f"Created Hermes session '{name}' -> {sid}", flush=True)
-            return sid
+        print(f"Created Hermes session '{name}' -> {new_sid}", flush=True)
+        return new_sid
 
     def stop_run(self, run_id: str) -> dict:
         r = requests.post(f"{self.base}/v1/runs/{run_id}/stop", headers=self.headers(), timeout=15)
@@ -542,6 +554,9 @@ class VoicePipelineServer:
 
         def _run_wrapper(wrapper, label, timeout=60):
             cmd = [sys.executable, wrapper, wav_path]
+            # Stamp BEFORE synthesis: this metric must capture the real TTS
+            # latency (1-10s for edge/piper), not ~0 after the fact.
+            timing.tts_request_start_monotonic = timing.tts_request_start_monotonic or time.perf_counter()
             # Pass bytes, not str: Python 3.13's subprocess.run(input=<str>)
             # raises "memoryview: a bytes-like object is required, not 'str'",
             # which silently broke both edge and piper at runtime.
@@ -884,7 +899,7 @@ def _request_authed(request: Request) -> bool:
     if not token:
         return False
     supplied = request.headers.get("x-jarvis-token") or request.cookies.get("jarvis_token")
-    return bool(supplied) and supplied == token
+    return bool(supplied) and hmac.compare_digest(supplied.encode(), token.encode())
 
 
 @app.middleware("http")
@@ -928,15 +943,18 @@ def _ws_allowed(ws: WebSocket) -> bool:
         # otherwise require the same token as browsers
         if _client_is_loopback(ws):
             return True
-        return bool(token) and (
-            ws.cookies.get("jarvis_token") == token or ws.query_params.get("token") == token
-        )
+        if not token:
+            return False
+        supplied = (ws.cookies.get("jarvis_token")
+                    or ws.query_params.get("token") or "")
+        return hmac.compare_digest(supplied.encode(), token.encode())
     host = (urlparse(origin).hostname or "").lower()
     if host not in ALLOWED_ORIGIN_HOSTS:
         return False
     if not token:
         return False
-    return ws.cookies.get("jarvis_token") == token or ws.query_params.get("token") == token
+    supplied = ws.cookies.get("jarvis_token") or ""
+    return hmac.compare_digest(supplied.encode(), token.encode())
 
 
 # --------------------------------------------------------------- HUD + proxy
@@ -1249,7 +1267,12 @@ def _dash_frame_ancestors(request: Request) -> str:
 async def dash_ws_proxy(ws: WebSocket, path: str) -> None:
     import websockets as wslib
     token = hud_token()
-    if token and ws.cookies.get("jarvis_token") != token:
+    # Fail-closed, matching the HTTP dash middleware (503 without token).
+    if not token:
+        await ws.close(code=4503)
+        return
+    supplied = ws.cookies.get("jarvis_token") or ""
+    if not hmac.compare_digest(supplied.encode(), token.encode()):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -1488,7 +1511,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         "approved": decision == "allow",
                         "approval_id": event.get("approval_id"),
                     }
-                    res = await asyncio.to_thread(pipeline.hermes.post_approval, run_id, body)
+                    try:
+                        res = await asyncio.to_thread(pipeline.hermes.post_approval, run_id, body)
+                    except Exception as exc:
+                        # Hermes unreachable must not kill the whole voice
+                        # connection (same guard as the stop_run path).
+                        await ws.send_json({"type": "error",
+                                            "message": f"Approval failed: {exc}"})
+                        continue
                     await ws.send_json({"type": "status", "message": f"Approval sent ({res['status_code']})."})
                 else:
                     await ws.send_json({"type": "error", "message": f"Unknown event type: {etype}"})
@@ -1497,21 +1527,33 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     conn.audio_chunks.append(message["bytes"])
                     _maybe_schedule_partial(ws, pipeline, conn)
     except WebSocketDisconnect:
-        if conn.turn_task and not conn.turn_task.done():
-            conn.turn_task.cancel()
         print("Client disconnected", flush=True)
     except RuntimeError as exc:
         # starlette raises RuntimeError('Cannot call "receive" once a
         # disconnect message has been received.') when the client vanishes
         # mid-turn; treat it the same as WebSocketDisconnect.
         if "disconnect" in str(exc).lower():
-            if conn.turn_task and not conn.turn_task.done():
-                conn.turn_task.cancel()
             print("Client disconnected (runtime)", flush=True)
         else:
             raise
     finally:
         WS_CLIENTS.discard(ws)
+        # Normal disconnects arrive as a {"type": "websocket.disconnect"}
+        # message (handled by `break` above), not as an exception — cleanup
+        # must therefore live here so the agent run is cancelled on EVERY
+        # exit path; otherwise a closed page leaves the run streaming to a
+        # dead socket with live side effects.
+        if conn.turn_task and not conn.turn_task.done():
+            proc = getattr(conn.timing, "tts_proc", None) if conn.timing else None
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            conn.turn_task.cancel()
+            await asyncio.gather(conn.turn_task, return_exceptions=True)
+        if conn.partial_task and not conn.partial_task.done():
+            conn.partial_task.cancel()
 
 
 def main() -> int:
