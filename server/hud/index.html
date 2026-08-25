@@ -257,6 +257,25 @@ footer{
 .helmet-character{height:100%; width:auto; max-width:100%; object-fit:contain;
   filter:saturate(1.1) contrast(1.08) drop-shadow(0 0 16px rgba(var(--rgb,32,199,255),calc(.26 + var(--voice-glow,.45) * .42))) drop-shadow(0 0 52px rgba(var(--rgb,32,199,255),.2));
   transform:scale(var(--voice-pulse,1)); transform-origin:center; transition:filter .28s, transform .12s linear}
+/* Facial overlay: eyes + mouth over the static PNG.
+   Dimensions from pixel scan of jarvis-character.png (1024×1536):
+   eyes y≈19-31%, mouth y≈49-51%. */
+.character-overlay{position:absolute; inset:0; z-index:3; pointer-events:none}
+/* Left/right eyes — thin glowing horizontal slits. Scales Y for blinks. */
+.eye{position:absolute; width:14%; aspect-ratio:2.5/1; border-radius:50%;
+  background:radial-gradient(ellipse,rgba(255,255,255,.92) 0%,rgba(var(--rgb,32,199,255)) 42%,transparent 76%);
+  box-shadow:0 0 10px 2px rgba(var(--rgb,32,199,255),.9), 0 0 28px 6px rgba(var(--rgb,32,199,255),.35);
+  transform-origin:center center; transform:scaleY(1); transition:transform 70ms ease-out}
+.eye.l{left:26%; top:21%}
+.eye.r{right:26%; top:21%}
+.eye.blink{transform:scaleY(.06)}
+/* Mouth panel — lip-sync via audio analyser (scaleY driven by RMS). */
+.mouth-panel{position:absolute; left:42%; right:42%; top:49.5%; height:3.2%;
+  border-radius:4px; background:rgba(var(--rgb,32,199,255),.12);
+  box-shadow:0 0 6px rgba(var(--rgb,32,199,255),.6), inset 0 0 4px rgba(var(--rgb,32,199,255),.25);
+  transform-origin:center center; transform:scaleY(1)}
+/* Reduced motion: kill the blink / listening tilt only; mouth still reacts. */
+@media (prefers-reduced-motion: reduce){ .eye.blink{transform:scaleY(1)} }
 .character-aura{position:absolute; inset:10% 22%; z-index:0; border-radius:50%;
   background:radial-gradient(ellipse, rgba(var(--rgb,32,199,255),calc(.1 + var(--voice-glow,.45)*.12)), rgba(var(--rgb,32,199,255),.02) 52%, transparent 75%);
   filter:blur(16px); animation:aura-breathe 3.2s ease-in-out infinite; pointer-events:none}
@@ -364,6 +383,12 @@ footer{
           <img class="helmet-character" src="assets/jarvis-character.png" alt="JARVIS">
           <div class="character-aura"></div>
           <div class="helmet-scan"></div>
+          <!-- Facial overlay: eyes + mouth driven by JS -->
+          <div class="character-overlay">
+            <div class="eye l"></div>
+            <div class="eye r"></div>
+            <div class="mouth-panel"></div>
+          </div>
         </div>
         <div class="reticle"></div>
         <div class="voice-ring"></div>
@@ -1052,6 +1077,50 @@ function voiceLoop(){
   requestAnimationFrame(voiceLoop);
 }
 requestAnimationFrame(voiceLoop);
+
+/* ---- natural blink loop (3–7s intervals) ---- */
+function scheduleBlink(){
+  if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const dur = 80 + Math.random()*60;   // blink duration 80–140ms
+  const d = document.querySelectorAll('.eye');
+  d.forEach(e => e.classList.add('blink'));
+  setTimeout(()=> d.forEach(e => e.classList.remove('blink')), dur);
+  setTimeout(scheduleBlink, 2500 + Math.random()*4000);
+}
+scheduleBlink();
+
+/* ---- mouth panel driven by audio RMS (lip-sync) + state-based tilt ---- */
+const mouth = document.querySelector('.mouth-panel');
+const rig = document.querySelector('.character-rig');
+const stateTilts = {listening: 0.025, thinking: -0.018, tool: 0.022, speaking: 0, standby: 0, error: 0};
+let lastState = null;
+function faceLoop(){
+  const st = window.jarvisState || 'standby';
+  if(st !== lastState){
+    lastState = st;
+    // tilt toward the speaker while listening/thinking/tooling; face center when speaking
+    const t = stateTilts[st] ?? 0;
+    rig.style.transform = `perspective(800px) rotateY(${(t*100).toFixed(2)}deg)`;
+    rig.style.transition = 'transform .45s ease-out';
+  }
+  if(mouth){
+    const an = window.speechAnalyser;
+    let rms = 0;
+    if(an){
+      const buf = new Uint8Array(an.fftSize);
+      an.getByteTimeDomainData(buf);
+      let s = 0;
+      for(let i = 0; i < buf.length; i++){ const v = (buf[i]-128)/128; s += v*v; }
+      rms = Math.sqrt(s / buf.length);
+    }
+    // base open + audio-reactive; clamp to reasonable range
+    const base = st === 'speaking' ? 1.4 : 1.0;
+    const open = Math.min(3.2, base + rms * 12);
+    mouth.style.transform = `scaleY(${open.toFixed(3)})`;
+  }
+  requestAnimationFrame(faceLoop);
+}
+requestAnimationFrame(faceLoop);
 
 /* ---- agent state -> accent color ---- */
 let lastRgb = null;
