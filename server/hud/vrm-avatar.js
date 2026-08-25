@@ -53,6 +53,17 @@
     return;                       // PNG stays visible
   }
 
+  // Relax the bind-pose T-pose into a natural A-pose: rotate upper arms
+  // down by ~70deg (Z-axis, mirrored) and slightly forward. Without this
+  // the avatar looks like it's doing jumping jacks in frame.
+  for(const side of ['left','right']){
+    const arm = vrm.humanoid.getNormalizedBoneNode(side+'UpperArm');
+    if(arm){ arm.rotation.z = (side==='left' ? 1.22 : -1.22); arm.rotation.x = 0.12; }
+    const fore = vrm.humanoid.getNormalizedBoneNode(side+'LowerArm');
+    if(fore){ fore.rotation.z = (side==='left' ? 0.10 : -0.10); }
+  }
+  vrm.humanoid.update();
+
   // hide the static PNG once the model is actually on screen
   png.style.display = 'none';
 
