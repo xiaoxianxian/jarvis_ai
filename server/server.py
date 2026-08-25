@@ -90,7 +90,7 @@ def read_usage() -> dict:
             data = {"total": {}, "days": {}}
     return {"total": data.get("total", {}), "today": data.get("days", {}).get(_today(), {})}
 ENV_PATHS = [Path.home() / ".hermes" / ".env", ROOT / ".env"]
-SENTENCE_RE = re.compile(r"(.+?[.!?])(?=\s|$)", re.DOTALL)
+SENTENCE_RE = re.compile(r"(.+?[.!?。！？])(?=\s|$|[^\d])", re.DOTALL)
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 CODEBLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 # Secret-shaped strings are never sent to cloud TTS (privacy filter):
@@ -162,6 +162,7 @@ class TurnTiming:
             "tools_used": self.tools_used,
             "stt_finalize_seconds": self._delta(self.stt_start_monotonic, self.stt_final_monotonic),
             "llm_time_to_first_token_seconds": self._delta(self.llm_start_monotonic, self.llm_first_token_monotonic),
+            "llm_first_token_to_first_sentence_seconds": self._delta(self.llm_first_token_monotonic, self.first_sentence_monotonic),
             "time_to_first_tts_audio_byte_seconds": self._delta(self.tts_request_start_monotonic, self.first_tts_audio_byte_monotonic),
             "end_of_speech_to_first_audio_seconds": self._delta(eos, self.first_tts_audio_byte_monotonic),
             "total_turn_seconds": self._delta(eos, self.total_done_monotonic),
