@@ -24,6 +24,9 @@ if ! lsof -t -iTCP:8765 -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 TOKEN=$(grep '^JARVIS_HUD_TOKEN=' ~/.hermes/.env | cut -d= -f2-)
+if [ -z "$TOKEN" ]; then
+  bad "JARVIS_HUD_TOKEN missing from ~/.hermes/.env — auth tests would be fake-green"
+fi
 
 section "1. Static checks"
 python3 -m py_compile server/server.py worker/stt_server.py worker/worker_stats.py server/scripts/ws_e2e_test.py \
@@ -33,12 +36,14 @@ python3 -c "import yaml,sys; yaml.safe_load(open('server/config/server.example.y
   && ok "yaml parse" || bad "yaml parse"
 
 section "2. Service health"
-for spec in "8765:/docs" "9443:/"; do :; done
-curl -s  -m 3 http://127.0.0.1:8765/docs  -o /dev/null && ok "voice ws :8765"   || bad "voice ws :8765"
-curl -sk -m 3 https://127.0.0.1:8766/hud/ -o /dev/null && ok "HUD TLS :8766"    || bad "HUD TLS :8766"
-curl -sk -m 3 https://127.0.0.1:9443/     -o /dev/null && ok "dash proxy :9443" || bad "dash proxy :9443"
-curl -s -m 3 http://127.0.0.1:9119/       -o /dev/null && ok "dashboard :9119"  || bad "dashboard :9119"
-curl -s -m 5 http://127.0.0.1:8642/health | grep -q ok && ok "hermes api :8642" || bad "hermes api :8642"
+# -f: any HTTP error status (500/404/502) must fail, not just connection errors.
+# :9443 root is expected to answer 401 (auth-gated dashboard proxy) — that IS healthy;
+# section 3 asserts the 401 explicitly. Here we only require "TLS listener alive".
+c=$(curl -sk -m 3 -o /dev/null -w '%{http_code}' https://127.0.0.1:9443/)
+case "$c" in 200|401) ok "dash proxy :9443";; *) bad "dash proxy :9443 -> $c";; esac
+c=$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:9119/)
+[ "$c" = "200" ] && ok "dashboard :9119" || bad "dashboard :9119 -> $c"
+curl -sf -m 5 http://127.0.0.1:8642/health | grep -q ok && ok "hermes api :8642" || bad "hermes api :8642"
 
 section "3. Auth matrix"
 c=$(curl -sk -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8766/api/chat -H 'Content-Type: application/json' -d '{}')
@@ -55,36 +60,17 @@ hdr=$(curl -sk -D- -o /dev/null -H "Cookie: jarvis_token=$TOKEN" https://127.0.0
 [ "$hdr" -ge 1 ] && ok "CSP frame-ancestors present" || bad "CSP frame-ancestors missing"
 
 section "4. WebSocket auth + negative events"
-server/.venv/bin/python - <<'EOF'
-import asyncio, sys, json, os
-sys.path.insert(0,'server'); import websockets
-TOK=[l.split('=',1)[1] for l in open(os.path.expanduser('~/.hermes/.env')) if l.startswith('JARVIS_HUD_TOKEN=')][0]
-async def main():
-    results=[]
-    async def conn(url, headers=None):
-        try:
-            async with websockets.connect(url, additional_headers=headers or {}, open_timeout=5) as ws:
-                await asyncio.wait_for(ws.recv(), timeout=5); return True
-        except Exception: return False
-    r=await conn('ws://127.0.0.1:8765/ws'); print('WS-LOOPBACK', 'ok' if r else 'fail')
-    r=await conn(f'ws://127.0.0.1:8765/ws?token={TOK}', {'Origin':'https://jarvis.local'}); print('WS-TOKEN-OK', 'ok' if r else 'fail')
-    r=await conn('ws://127.0.0.1:8765/ws?token=wrong', {'Origin':'https://jarvis.local'}); print('WS-BAD-TOKEN', 'blocked' if not r else 'LEAK')
-    # malformed json keeps connection alive
-    async with websockets.connect('ws://127.0.0.1:8765/ws') as ws:
-        await ws.recv(); await ws.send('{broken')
-        ev=json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-        print('WS-MALFORMED', 'ok' if ev.get('type')=='error' else 'fail')
-        await ws.send(json.dumps({'type':'stop'}))
-        ev=json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-        print('WS-STOP-BEFORE-START', 'ok' if ev.get('type')=='error' else 'fail')
-asyncio.run(main())
-EOF
+# Single scored run (the old unscored duplicate was pure drift risk).
+if [ -z "$TOKEN" ]; then
+  bad "WS-LOOPBACK (skipped: no token)"; bad "WS-TOKEN-OK (skipped)"; bad "WS-BAD-TOKEN (skipped)"
+  bad "WS-MALFORMED (skipped)"; bad "WS-STOP-BEFORE-START (skipped)"
+else
 while read -r name res; do
   case "$name" in
     WS-BAD-TOKEN) [ "$res" = blocked ] && ok "$name" || bad "$name=$res";;
     *) [ "$res" = ok ] && ok "$name" || bad "$name=$res";;
   esac
-done < <(server/.venv/bin/python - <<'EOF' 2>/dev/null
+done < <(server/.venv/bin/python - <<'EOF' 2>/dev/null || echo "WS-SUITE crash fail"
 import asyncio, sys, json, os
 sys.path.insert(0,'server'); import websockets
 TOK=[l.split('=',1)[1] for l in open(os.path.expanduser('~/.hermes/.env')) if l.startswith('JARVIS_HUD_TOKEN=')][0]
@@ -105,6 +91,7 @@ async def main():
 asyncio.run(main())
 EOF
 )
+fi
 
 section "5. HUD assets"
 for f in "" assets/jarvis-character.png models/helmet.glb vendor/three.module.js; do

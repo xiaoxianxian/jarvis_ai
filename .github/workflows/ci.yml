@@ -18,15 +18,8 @@ jobs:
 
       - name: Compile all Python sources
         run: |
-          python3 -m py_compile \
-            server/server.py \
-            worker/stt_server.py \
-            worker/worker_stats.py \
-            server/scripts/ws_e2e_test.py \
-            server/tts_edge.py \
-            server/tts_piper.py \
-            hermes-plugin/hud_display/tools.py \
-            hermes-plugin/hud_display/schemas.py
+          # compileall sweeps everything (new modules are covered automatically)
+          python3 -m compileall -q server worker client hermes-plugin
 
       - name: Shell script syntax
         run: |
@@ -42,32 +35,24 @@ jobs:
               print("ok:", f)
           EOF
 
-      - name: Proxy allowlist security tests (no server needed)
+      - name: Proxy allowlist security tests (imports the REAL server code)
         run: |
           pip install --quiet fastapi uvicorn requests pyyaml numpy websockets psutil || true
-          # stub heavy imports that aren't needed for the pure functions under test
+          # stub heavy imports that aren't needed for the pure function under test,
+          # then load _proxy_allowed from server/server.py itself — a copy-pasted
+          # reimplementation here would drift silently from production (C1).
           python3 - <<'EOF'
           import sys, types, unittest.mock as m
           sys.modules['RealtimeSTT'] = m.MagicMock()
           sys.modules['anthropic'] = m.MagicMock()
           sys.modules.update({'uvicorn': m.MagicMock()})
-          import importlib.util, posixpath
-          from urllib.parse import unquote
 
-          ALLOWED_GET_PATHS = {"/health","/health/detailed","/v1/capabilities",
-                               "/v1/skills","/v1/toolsets","/api/jobs","/api/sessions"}
-
-          def _proxy_allowed(method, path):
-              decoded = unquote(path)
-              if decoded != path: return False
-              normalized = posixpath.normpath(path)
-              if ".." in normalized.split("/") or normalized != path: return False
-              if method == "GET":
-                  return normalized in ALLOWED_GET_PATHS or (
-                      normalized.startswith("/api/sessions/") and normalized.endswith("/messages"))
-              if method == "POST":
-                  return normalized == "/v1/responses"
-              return False
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("jarvis_server", "server/server.py")
+          mod = importlib.util.module_from_spec(spec)
+          sys.modules["jarvis_server"] = mod  # dataclass processing requires registration
+          spec.loader.exec_module(mod)
+          _proxy_allowed = mod._proxy_allowed
 
           cases = [
               ("GET", "/health", True),
@@ -86,7 +71,7 @@ jobs:
           for m_, p in failed:
               print(f"FAIL: {m_} {p!r}")
           assert not failed, f"{len(failed)} security cases failed"
-          print(f"proxy allowlist: {len(cases)}/{len(cases)} security cases pass")
+          print(f"proxy allowlist (real impl): {len(cases)}/{len(cases)} security cases pass")
           EOF
 
       - name: requirements.txt sanity
