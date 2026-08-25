@@ -41,8 +41,11 @@
     vrm = gltf.userData.vrm;
     if(!vrm) throw new Error('no VRM payload');
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
-    // VRM 1.0 models face +Z; rotate so the avatar faces the camera (-Z)
-    vrm.scene.rotation.y = Math.PI;
+    // Orientation: VRM1 models natively face +Z — i.e. straight at our camera.
+    // Only legacy VRM0 models face away and need the PI flip; rotateVRM0()
+    // applies it conditionally. (Blindly adding rotation.y=PI here turned the
+    // avatar around — the infamous "Sadako" build.)
+    VRMUtils.rotateVRM0(vrm);
     scene.add(vrm.scene);
   }catch(err){
     console.warn('VRM load failed, falling back to static mask', err);
