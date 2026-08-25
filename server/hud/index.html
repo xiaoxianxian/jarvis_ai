@@ -1108,5 +1108,11 @@ requestAnimationFrame(stateLoop);
 })();
 </script>
 
+<!-- VRM live avatar: replaces the static PNG with an animated 3D model
+     (blinks / leans in while listening / lip-syncs replies). Falls back
+     to the PNG automatically if WebGL or the model is unavailable. -->
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/":"./vendor/"}}</script>
+<script type="module" src="./vrm-avatar.js"></script>
+
 </body>
 </html>
