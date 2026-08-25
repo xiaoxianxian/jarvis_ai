@@ -18,7 +18,10 @@
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const canvas = renderer.domElement;
-  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:4';
+  // No background clear color (transparent), and no outline/border: the HUD
+  // look comes from the surrounding rings, a hard canvas edge reads as a
+  // "white frame" screenshot artifact.
+  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:4;border:none;outline:none;background:transparent';
   rig.appendChild(canvas);
 
   const scene = new THREE.Scene();
@@ -37,7 +40,8 @@
 
   let vrm = null;
   try{
-    const gltf = await loader.loadAsync('./models/jarvis-avatar.vrm');
+    // cache-bust: bump v= when swapping the model file (browsers hard-cache .vrm)
+    const gltf = await loader.loadAsync('./models/jarvis-avatar.vrm?v=3');
     vrm = gltf.userData.vrm;
     if(!vrm) throw new Error('no VRM payload');
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
@@ -96,7 +100,7 @@
     setTimeout(scheduleBlink, 2200 + Math.random()*3800);
   })();
 
-  // idle breathing sway + state tilt + mouth lip-sync
+  // idle breathing sway + state tilt + mouth lip-sync + mouse tracking
   // NOTE: the model is rotated PI to face the camera, so positive yaw appears
   // as a turn to the viewer's LEFT — negate to make "listening" lean toward
   // the user's right (the mic side).
@@ -104,17 +108,45 @@
   let curTilt = 0, t = 0;
   const clock = new THREE.Clock();
   const audioBuf = new Uint8Array(512);
+
+  /* ---- mouse tracking: eyes + head follow the cursor while it moves,
+     ease back to center after the cursor rests ---- */
+  const LOOK_MAX = .5;            // max head yaw (rad)
+  const LOOK_MAX_PITCH = .25;     // max head pitch
+  let lookX = 0, lookY = 0;       // smoothed -1..1
+  let targetX = 0, targetY = 0;
+  let lastMove = 0;
+  addEventListener('mousemove', e => {
+    const r = rig.getBoundingClientRect();
+    // normalized offset from avatar center, clamped to [-1,1]
+    const cx = r.left + r.width/2, cy = r.top + r.height/2;
+    targetX = Math.max(-1, Math.min(1, (e.clientX - cx) / (r.width)));
+    targetY = Math.max(-1, Math.min(1, -(e.clientY - cy) / (r.height)));   // screen Y is down
+    lastMove = performance.now();
+  });
+
   renderer.setAnimationLoop(()=>{
     const dt = clock.getDelta(); t += dt;
     const st = window.jarvisState || 'standby';
 
-    // smooth yaw toward target tilt
+    // cursor idle >1s -> gaze returns to the user
+    if(performance.now() - lastMove > 1000){ targetX = 0; targetY = 0; }
+    lookX += (targetX - lookX) * Math.min(1, dt*6);
+    lookY += (targetY - lookY) * Math.min(1, dt*6);
+
+    // smooth yaw toward state tilt
     const want = TILT[st] ?? 0;
     curTilt += (want - curTilt) * Math.min(1, dt*3);
     const spine = vrm.humanoid.getNormalizedBoneNode('spine');
     const neck  = vrm.humanoid.getNormalizedBoneNode('neck');
+    const head  = vrm.humanoid.getNormalizedBoneNode('head');
     if(spine){ spine.rotation.y = curTilt * .7 + Math.sin(t*.6)*.05; }
-    if(neck){ neck.rotation.y = curTilt * .3; }
+    // head carries most of the mouse-follow; neck a fraction
+    if(neck){ neck.rotation.y = curTilt * .3 + lookX * LOOK_MAX * .35; }
+    if(head){
+      head.rotation.y = lookX * LOOK_MAX * .65;
+      head.rotation.x = -lookY * LOOK_MAX_PITCH;   // three.js pitch: positive looks down
+    }
 
     // subtle idle bob
     vrm.scene.position.y = Math.sin(t*1.4) * .006;
